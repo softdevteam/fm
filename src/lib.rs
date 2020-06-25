@@ -53,6 +53,7 @@ use regex::Regex;
 
 const WILDCARD: &str = "...";
 
+#[derive(Debug)]
 struct FMOptions {
     name_matcher: Option<(Regex, Regex)>,
     ignore_leading_whitespace: bool,
@@ -84,6 +85,7 @@ impl Default for FMOptions {
 /// assert!(matcher.matches("a a").is_ok());
 /// assert!(matcher.matches("a b").is_err());
 /// ```
+#[derive(Debug)]
 pub struct FMBuilder<'a> {
     ptn: &'a str,
     options: FMOptions,
@@ -118,6 +120,9 @@ impl<'a> FMBuilder<'a> {
     /// assert!(matcher.matches("a b a").is_ok());
     /// assert!(matcher.matches("a b b").is_err());
     /// ```
+    ///
+    /// Note that name matching and wildcards cannot be used together in a single line (e.g. for
+    /// the above example, `...$1` would lead to a pattern validation error).
     pub fn name_matcher(mut self, matcher: Option<(Regex, Regex)>) -> Self {
         self.options.name_matcher = matcher;
         self
@@ -137,14 +142,31 @@ impl<'a> FMBuilder<'a> {
 
     /// Turn this `FMBuilder` into a `FMatcher`.
     pub fn build(self) -> Result<FMatcher<'a>, Box<dyn Error>> {
+        self.validate()?;
         Ok(FMatcher {
             ptn: self.ptn,
             options: self.options,
         })
     }
+
+    fn validate(&self) -> Result<(), Box<dyn Error>> {
+        if let Some((ref ptn_re, _)) = self.options.name_matcher {
+            for (i, l) in self.ptn.lines().enumerate() {
+                let l = l.trim();
+                if (l.starts_with("...") || l.ends_with("...")) && ptn_re.is_match(l) {
+                    return Err(Box::<dyn Error>::from(format!(
+                        "Can't mix name matching with wildcards on line {}.",
+                        i + 1
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 /// The fuzzy matcher.
+#[derive(Debug)]
 pub struct FMatcher<'a> {
     ptn: &'a str,
     options: FMOptions,
@@ -412,5 +434,18 @@ mod tests {
             .unwrap()
             .matches("x")
             .unwrap();
+    }
+
+    #[test]
+    fn wildcards_and_names() {
+        let ptn_re = Regex::new("\\$.+?\\b").unwrap();
+        let text_re = Regex::new("").unwrap();
+        let builder = FMBuilder::new("$1\n...$1abc")
+            .unwrap()
+            .name_matcher(Some((ptn_re, text_re)));
+        assert_eq!(
+            &(*(builder.build().unwrap_err())).to_string(),
+            "Can't mix name matching with wildcards on line 2."
+        );
     }
 }
