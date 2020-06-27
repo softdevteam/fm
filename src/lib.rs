@@ -215,8 +215,19 @@ impl<'a> FMatcher<'a> {
                     }
                 }
                 (None, None) => return Ok(()),
-                (Some(x), None) if x.trim() == WILDCARD => return Ok(()),
-                (Some(_), None) | (None, Some(_)) => return Err(text_lines_off),
+                (Some(x), None) => {
+                    if x.trim() == WILDCARD {
+                        while let Some(ptnl) = ptn_lines.next() {
+                            if !self.match_line(&mut names, ptnl, "") {
+                                return Err(text_lines_off);
+                            }
+                        }
+                        return Ok(());
+                    } else {
+                        return Err(text_lines_off);
+                    }
+                }
+                (None, Some(_)) => return Err(text_lines_off),
             }
         }
     }
@@ -321,6 +332,9 @@ mod tests {
         assert!(helper("a\n...b...", "a\nbz"));
         assert!(helper("a\n...b...", "a\nxb"));
         assert!(!helper("a\n...b...", "a\nxb\nc"));
+        assert!(!helper("a", "a\nb"));
+        assert!(!helper("a\nb", "a"));
+        assert!(!helper("a\n...\nb", "a"));
     }
 
     #[test]
