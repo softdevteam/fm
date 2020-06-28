@@ -47,6 +47,7 @@ use std::{
     collections::hash_map::{Entry, HashMap},
     default::Default,
     error::Error,
+    str::Lines,
 };
 
 use regex::Regex;
@@ -58,6 +59,7 @@ struct FMOptions {
     name_matcher: Option<(Regex, Regex)>,
     ignore_leading_whitespace: bool,
     ignore_trailing_whitespace: bool,
+    ignore_surrounding_blank_lines: bool,
 }
 
 impl Default for FMOptions {
@@ -66,6 +68,7 @@ impl Default for FMOptions {
             name_matcher: None,
             ignore_leading_whitespace: true,
             ignore_trailing_whitespace: true,
+            ignore_surrounding_blank_lines: true,
         }
     }
 }
@@ -140,6 +143,13 @@ impl<'a> FMBuilder<'a> {
         self
     }
 
+    /// If `yes`, blank lines at the start and end of both the pattern and text are ignored for
+    /// matching purposes.
+    pub fn ignore_surrounding_blank_lines(mut self, yes: bool) -> Self {
+        self.options.ignore_surrounding_blank_lines = yes;
+        self
+    }
+
     /// Turn this `FMBuilder` into a `FMatcher`.
     pub fn build(self) -> Result<FMatcher<'a>, Box<dyn Error>> {
         self.validate()?;
@@ -184,10 +194,10 @@ impl<'a> FMatcher<'a> {
     pub fn matches(&self, text: &str) -> Result<(), usize> {
         let mut names = HashMap::new();
         let mut ptn_lines = self.ptn.lines();
-        let mut ptnl = ptn_lines.next();
+        let (mut ptnl, _) = self.skip_blank_lines(&mut ptn_lines, None);
         let mut text_lines = text.lines();
-        let mut textl = text_lines.next();
-        let mut text_lines_off = 1;
+        let (mut textl, mut text_lines_off) = self.skip_blank_lines(&mut text_lines, None);
+        text_lines_off += 1;
         loop {
             match (ptnl, textl) {
                 (Some(x), Some(y)) => {
@@ -224,12 +234,55 @@ impl<'a> FMatcher<'a> {
                         }
                         return Ok(());
                     } else {
+                        if self.skip_blank_lines(&mut ptn_lines, Some(x)).0.is_none() {
+                            return Ok(());
+                        }
                         return Err(text_lines_off);
                     }
                 }
-                (None, Some(_)) => return Err(text_lines_off),
+                (None, Some(x)) => {
+                    let (x, skipped) = self.skip_blank_lines(&mut text_lines, Some(x));
+                    if x.is_none() {
+                        return Ok(());
+                    }
+                    return Err(text_lines_off + skipped);
+                }
             }
         }
+    }
+
+    /// Skip blank lines in the input if `options.ignore_surrounding_blank_lines` is set. If `line`
+    /// is `Some(...)` that is taken as the first line of the input and after that is processesd
+    /// the `lines` iterator is used. The contents of the first non-blank line are returned as well
+    /// as the number of lines skipped. Notice that this is intended *only* to skip blank lines at
+    /// the start and end of a string, as it is predicated on the `ignore_surrounding_blank_lines`
+    /// option (i.e. don't use this to skip blank lines in the middle of the input, because that
+    /// will fail if the user sets `ignore_surrounding_blank_lines` to `false`!).
+    fn skip_blank_lines(
+        &self,
+        lines: &mut Lines<'a>,
+        line: Option<&'a str>,
+    ) -> (Option<&'a str>, usize) {
+        if !self.options.ignore_surrounding_blank_lines {
+            if line.is_some() {
+                return (line, 0);
+            }
+            return (lines.next(), 0);
+        }
+        let mut trimmed = 0;
+        if let Some(l) = line {
+            if !l.trim().is_empty() {
+                return (Some(l), 0);
+            }
+            trimmed += 1;
+        }
+        while let Some(l) = lines.next() {
+            if !l.trim().is_empty() {
+                return (Some(l), trimmed);
+            }
+            trimmed += 1;
+        }
+        (None, trimmed)
     }
 
     fn match_line<'b>(
@@ -310,6 +363,8 @@ mod tests {
             FMatcher::new(ptn).unwrap().matches(text).is_ok()
         }
         assert!(helper("", ""));
+        assert!(helper("\n", ""));
+        assert!(helper("", "\n"));
         assert!(helper("a", "a"));
         assert!(!helper("a", "ab"));
         assert!(helper("...", ""));
@@ -335,6 +390,38 @@ mod tests {
         assert!(!helper("a", "a\nb"));
         assert!(!helper("a\nb", "a"));
         assert!(!helper("a\n...\nb", "a"));
+        assert!(helper("a\n", "a\n"));
+        assert!(helper("a\n", "a"));
+        assert!(helper("a", "a\n"));
+        assert!(helper("a\n\n", "a\n\n"));
+        assert!(helper("a\n\n", "a"));
+        assert!(helper("a", "a\n\n"));
+        assert!(!helper("a\n\nb", "a\n"));
+        assert!(!helper("a\n", "a\n\nb"));
+    }
+
+    #[test]
+    fn dont_ignore_surrounding_blank_lines() {
+        fn helper(ptn: &str, text: &str) -> bool {
+            FMBuilder::new(ptn)
+                .unwrap()
+                .ignore_surrounding_blank_lines(false)
+                .build()
+                .unwrap()
+                .matches(text)
+                .is_ok()
+        }
+        assert!(helper("", ""));
+        assert!(!helper("\n", ""));
+        assert!(!helper("", "\n"));
+        assert!(helper("a\n", "a\n"));
+        assert!(helper("a\n", "a"));
+        assert!(helper("a", "a\n"));
+        assert!(helper("a\n\n", "a\n\n"));
+        assert!(!helper("a\n\n", "a"));
+        assert!(!helper("a", "a\n\n"));
+        assert!(!helper("a\n\nb", "a\n"));
+        assert!(!helper("a\n", "a\n\nb"));
     }
 
     #[test]
@@ -406,6 +493,9 @@ mod tests {
         assert_eq!(helper("a\n...\nd", "a\nb\nc"), 3);
         assert_eq!(helper("a\nb...", "a\nb\nc"), 3);
         assert_eq!(helper("a\n...b...", "a\nxb\nc"), 3);
+
+        assert_eq!(helper("a\n\nb", "a\n"), 2);
+        assert_eq!(helper("a\n", "a\n\nb"), 3);
 
         assert_eq!(helper("$1", ""), 1);
         assert_eq!(helper("$1, $1", "a, b"), 1);
