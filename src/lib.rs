@@ -204,8 +204,7 @@ impl<'a> FMatcher<'a> {
         FMBuilder::new(ptn)?.build()
     }
 
-    /// Does this fuzzy matcher match `text`? Returns `Ok(())` on success or `Err(usize)` on error
-    /// where the `usize` is the line number of the first line in `text` where the match failed.
+    /// Does this fuzzy matcher match `text`?
     pub fn matches(&self, text: &str) -> Result<(), FMatchError> {
         let mut names = HashMap::new();
         let mut ptn_lines = self.ptn.lines();
