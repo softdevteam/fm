@@ -298,6 +298,7 @@ impl<'a> FMatcher<'a> {
     /// the start and end of a string, as it is predicated on the `ignore_surrounding_blank_lines`
     /// option (i.e. don't use this to skip blank lines in the middle of the input, because that
     /// will fail if the user sets `ignore_surrounding_blank_lines` to `false`!).
+    #[allow(clippy::while_let_on_iterator)]
     fn skip_blank_lines(
         &self,
         lines: &mut Lines<'a>,
@@ -369,10 +370,8 @@ impl<'a> FMatcher<'a> {
                         if let Some(textm) = text_re.find(text) {
                             if self.options.distinct_name_matching {
                                 for (x, y) in names.iter() {
-                                    if x != &ptnm.as_str() {
-                                        if y == &textm.as_str() {
-                                            return false;
-                                        }
+                                    if x != &ptnm.as_str() && y == &textm.as_str() {
+                                        return false;
                                     }
                                 }
                             }
