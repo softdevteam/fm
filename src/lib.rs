@@ -206,11 +206,11 @@ impl<'a> FMatcher<'a> {
                         match ptnl {
                             Some(x) => {
                                 while let Some(y) = textl {
+                                    text_lines_off += 1;
                                     if self.match_line(&mut names, x, y) {
                                         break;
                                     }
                                     textl = text_lines.next();
-                                    text_lines_off += 1;
                                 }
                                 text_lines_off -= 1;
                             }
@@ -510,6 +510,8 @@ mod tests {
         assert_eq!(helper("$1\na\n$1", "a\na\nb"), 3);
         assert_eq!(helper("$1\n$1\na", "a\na\nb"), 3);
         assert_eq!(helper("$1\n$1\na", "a\nb\na"), 2);
+
+        assert_eq!(helper("...\nb\nc\nd\n", "a\nb\nc\n0\ne"), 4);
     }
 
     #[test]
