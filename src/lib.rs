@@ -238,7 +238,7 @@ impl<'a> FMatcher<'a> {
                         return Err(FMatchError {
                             ptn: self.ptn.to_owned(),
                             text: text.to_owned(),
-                            fail_line: text_lines_off,
+                            text_line_off: text_lines_off,
                         });
                     }
                 }
@@ -250,7 +250,7 @@ impl<'a> FMatcher<'a> {
                                 return Err(FMatchError {
                                     ptn: self.ptn.to_owned(),
                                     text: text.to_owned(),
-                                    fail_line: text_lines_off,
+                                    text_line_off: text_lines_off,
                                 });
                             }
                         }
@@ -262,7 +262,7 @@ impl<'a> FMatcher<'a> {
                         return Err(FMatchError {
                             ptn: self.ptn.to_owned(),
                             text: text.to_owned(),
-                            fail_line: text_lines_off,
+                            text_line_off: text_lines_off,
                         });
                     }
                 }
@@ -274,7 +274,7 @@ impl<'a> FMatcher<'a> {
                     return Err(FMatchError {
                         ptn: self.ptn.to_owned(),
                         text: text.to_owned(),
-                        fail_line: text_lines_off + skipped,
+                        text_line_off: text_lines_off + skipped,
                     });
                 }
             }
@@ -397,12 +397,12 @@ impl<'a> FMatcher<'a> {
 pub struct FMatchError {
     ptn: String,
     text: String,
-    fail_line: usize,
+    text_line_off: usize,
 }
 
 impl FMatchError {
-    pub fn failure_line(&self) -> usize {
-        self.fail_line
+    pub fn text_line_off(&self) -> usize {
+        self.text_line_off
     }
 }
 
@@ -428,11 +428,11 @@ impl fmt::Display for FMatchError {
             Ok(())
         }
 
-        writeln!(f, "Failed to match at line {}.\n", self.failure_line())?;
+        writeln!(f, "Failed to match at line {}.\n", self.text_line_off())?;
         writeln!(f, "Pattern:")?;
         display_lines(f, &self.ptn, lno_chars, None)?;
         writeln!(f, "\nText:")?;
-        display_lines(f, &self.text, lno_chars, Some(self.fail_line))
+        display_lines(f, &self.text, lno_chars, Some(self.text_line_off))
     }
 }
 
@@ -440,7 +440,7 @@ impl fmt::Display for FMatchError {
 /// uses `Debug` and doesn't interpret formatting characters when printing the panic message.
 impl fmt::Debug for FMatchError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Failed to match at line {}", self.fail_line)
+        write!(f, "Failed to match at line {}", self.text_line_off)
     }
 }
 
@@ -585,7 +585,7 @@ mod tests {
                 .unwrap()
                 .matches(text)
                 .unwrap_err()
-                .failure_line()
+                .text_line_off()
         };
 
         assert_eq!(helper("a\n...\nd", "a\nb\nc"), 3);
