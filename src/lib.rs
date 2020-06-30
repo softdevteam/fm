@@ -37,8 +37,8 @@
 /// ```rust
 /// use {fm::FMBuilder, regex::Regex};
 ///
-/// let ptn_re = Regex::new("\\$.+?\\b").unwrap();
-/// let text_re = Regex::new(".+?\\b").unwrap();
+/// let ptn_re = Regex::new(r"\$.+?\b").unwrap();
+/// let text_re = Regex::new(r".+?\b").unwrap();
 /// let matcher = FMBuilder::new("$1 $1")
 ///                         .unwrap()
 ///                         .name_matcher(Some((ptn_re, text_re)))
@@ -83,8 +83,8 @@ impl Default for FMOptions {
 /// ```rust
 /// use {fm::FMBuilder, regex::Regex};
 ///
-/// let ptn_re = Regex::new("\\$.+?\\b").unwrap();
-/// let text_re = Regex::new(".+?\\b").unwrap();
+/// let ptn_re = Regex::new(r"\$.+?\b").unwrap();
+/// let text_re = Regex::new(r".+?\b").unwrap();
 /// let matcher = FMBuilder::new("$1 $1")
 ///                         .unwrap()
 ///                         .name_matcher(Some((ptn_re, text_re)))
@@ -118,8 +118,8 @@ impl<'a> FMBuilder<'a> {
     /// ```rust
     /// use {fm::FMBuilder, regex::Regex};
     ///
-    /// let ptn_re = Regex::new("\\$.+?\\b").unwrap();
-    /// let text_re = Regex::new(".+?\\b").unwrap();
+    /// let ptn_re = Regex::new(r"\$.+?\b").unwrap();
+    /// let text_re = Regex::new(r".+?\b").unwrap();
     /// let matcher = FMBuilder::new("$1 b $1")
     ///                         .unwrap()
     ///                         .name_matcher(Some((ptn_re, text_re)))
@@ -505,8 +505,8 @@ mod tests {
 
     #[test]
     fn name_matcher() {
-        let nameptn_re = Regex::new("\\$.+?\\b").unwrap();
-        let name_re = Regex::new(".+?\\b").unwrap();
+        let nameptn_re = Regex::new(r"\$.+?\b").unwrap();
+        let name_re = Regex::new(r".+?\b").unwrap();
         let helper = |ptn: &str, text: &str| -> bool {
             FMBuilder::new(ptn)
                 .unwrap()
