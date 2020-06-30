@@ -25,6 +25,10 @@
 //! assert!(FMatcher::new("a\n...\nb").unwrap().matches("a\na\nb\nb").is_err());
 //! ```
 //!
+//! When a match fails, the matcher returns an error indicating the line number at which the match
+//! failed. The error can be formatted for human comprehension using the provided `Display`
+//! implementation.
+//!
 //! If you want to use non-default options, you will first need to use `FMBuilder` before having
 //! access to an `FMatcher`. For example, to use "name matching" (where you specify that the same
 //! chunk of text must appear at multiple points in the text, but without specifying exactly what
@@ -47,6 +51,7 @@ use std::{
     collections::hash_map::{Entry, HashMap},
     default::Default,
     error::Error,
+    fmt,
     str::Lines,
 };
 
@@ -175,6 +180,64 @@ impl<'a> FMBuilder<'a> {
     }
 }
 
+/// An error indicating a failed match.
+/// The pattern and text are copied in so that the error isn't tied to their lifetimes.
+pub struct FMatchError {
+    ptn: String,
+    text: String,
+    fail_line: usize,
+}
+
+impl FMatchError {
+    pub fn failure_line(&self) -> usize {
+        self.fail_line
+    }
+}
+
+impl fmt::Display for FMatchError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        // Figure out how many characters are required for the line numbers margin.
+        let max_lines = usize::max(self.ptn.len(), self.text.len());
+        let lno_chars = format!("{}", max_lines).len();
+
+        fn display_lines(
+            f: &mut fmt::Formatter,
+            s: &str,
+            lno_chars: usize,
+            mark_line: Option<usize>,
+        ) -> fmt::Result {
+            for (num, line) in s.lines().enumerate() {
+                let mark = match mark_line {
+                    Some(ml) if ml == num + 1 => ">> ",
+                    _ => "   ",
+                };
+                writeln!(f, "{}{:width$}: {}", mark, num + 1, line, width = lno_chars)?;
+            }
+            Ok(())
+        }
+
+        writeln!(f, "Failed to match at line {}.\n", self.failure_line())?;
+        writeln!(f, "Pattern:")?;
+        display_lines(f, &self.ptn, lno_chars, None)?;
+        writeln!(f, "\nText:")?;
+        display_lines(f, &self.text, lno_chars, Some(self.fail_line))
+    }
+}
+
+/// A short error message. We don't reuse the longer message from `Display` as a Rust panic
+/// uses `Debug` and doesn't interpret formatting characters when printing the panic message.
+impl fmt::Debug for FMatchError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Failed to match at line {}", self.fail_line)
+    }
+}
+
+impl Error for FMatchError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        None
+    }
+}
+
 /// The fuzzy matcher.
 #[derive(Debug)]
 pub struct FMatcher<'a> {
@@ -191,7 +254,7 @@ impl<'a> FMatcher<'a> {
 
     /// Does this fuzzy matcher match `text`? Returns `Ok(())` on success or `Err(usize)` on error
     /// where the `usize` is the line number of the first line in `text` where the match failed.
-    pub fn matches(&self, text: &str) -> Result<(), usize> {
+    pub fn matches(&self, text: &str) -> Result<(), FMatchError> {
         let mut names = HashMap::new();
         let mut ptn_lines = self.ptn.lines();
         let (mut ptnl, _) = self.skip_blank_lines(&mut ptn_lines, None);
@@ -221,7 +284,11 @@ impl<'a> FMatcher<'a> {
                         textl = text_lines.next();
                         text_lines_off += 1;
                     } else {
-                        return Err(text_lines_off);
+                        return Err(FMatchError {
+                            ptn: self.ptn.to_owned(),
+                            text: text.to_owned(),
+                            fail_line: text_lines_off,
+                        });
                     }
                 }
                 (None, None) => return Ok(()),
@@ -229,7 +296,11 @@ impl<'a> FMatcher<'a> {
                     if x.trim() == WILDCARD {
                         while let Some(ptnl) = ptn_lines.next() {
                             if !self.match_line(&mut names, ptnl, "") {
-                                return Err(text_lines_off);
+                                return Err(FMatchError {
+                                    ptn: self.ptn.to_owned(),
+                                    text: text.to_owned(),
+                                    fail_line: text_lines_off,
+                                });
                             }
                         }
                         return Ok(());
@@ -237,7 +308,11 @@ impl<'a> FMatcher<'a> {
                         if self.skip_blank_lines(&mut ptn_lines, Some(x)).0.is_none() {
                             return Ok(());
                         }
-                        return Err(text_lines_off);
+                        return Err(FMatchError {
+                            ptn: self.ptn.to_owned(),
+                            text: text.to_owned(),
+                            fail_line: text_lines_off,
+                        });
                     }
                 }
                 (None, Some(x)) => {
@@ -245,7 +320,11 @@ impl<'a> FMatcher<'a> {
                     if x.is_none() {
                         return Ok(());
                     }
-                    return Err(text_lines_off + skipped);
+                    return Err(FMatchError {
+                        ptn: self.ptn.to_owned(),
+                        text: text.to_owned(),
+                        fail_line: text_lines_off + skipped,
+                    });
                 }
             }
         }
@@ -488,6 +567,7 @@ mod tests {
                 .unwrap()
                 .matches(text)
                 .unwrap_err()
+                .failure_line()
         };
 
         assert_eq!(helper("a\n...\nd", "a\nb\nc"), 3);
@@ -553,5 +633,15 @@ mod tests {
             &(*(builder.build().unwrap_err())).to_string(),
             "Can't mix name matching with wildcards on line 2."
         );
+    }
+
+    #[test]
+    fn error_display() {
+        let ptn = "a\nb\nc\nd\n";
+        let text = "a\nb\nc\nz\nd\n";
+
+        let er = FMatcher::new(ptn).unwrap().matches(&text).unwrap_err();
+        let msg = format!("{}", &er);
+        assert!(msg.contains("\n>>  4: z\n"));
     }
 }
