@@ -431,23 +431,31 @@ impl fmt::Display for FMatchError {
             f: &mut fmt::Formatter,
             s: &str,
             lno_chars: usize,
-            mark_line: Option<usize>,
+            mark_line: usize,
         ) -> fmt::Result {
-            for (num, line) in s.lines().enumerate() {
-                let mark = match mark_line {
-                    Some(ml) if ml == num + 1 => ">> ",
-                    _ => "   ",
-                };
-                writeln!(f, "{}{:width$}: {}", mark, num + 1, line, width = lno_chars)?;
+            let mut num_lines = 0;
+            for (i, line) in s.lines().enumerate() {
+                let mark = if mark_line == i + 1 { ">> " } else { "   " };
+                if line.is_empty() {
+                    writeln!(f, "{}{:width$}:", mark, i + 1, width = lno_chars)?;
+                } else {
+                    writeln!(f, "{}{:width$}: {}", mark, i + 1, line, width = lno_chars)?;
+                }
+                num_lines += 1;
+                if mark_line == i + 1 {
+                    break;
+                }
+            }
+            if mark_line == num_lines + 1 {
+                writeln!(f, ">> {:width$}:", num_lines + 1, width = lno_chars)?;
             }
             Ok(())
         }
 
-        writeln!(f, "Failed to match at line {}.\n", self.text_line_off())?;
-        writeln!(f, "Pattern:")?;
-        display_lines(f, &self.ptn, lno_chars, None)?;
-        writeln!(f, "\nText:")?;
-        display_lines(f, &self.text, lno_chars, Some(self.text_line_off))
+        writeln!(f, "Pattern (error at line {}):", self.ptn_line_off)?;
+        display_lines(f, &self.ptn, lno_chars, self.ptn_line_off)?;
+        writeln!(f, "\nText (error at line {}):", self.text_line_off)?;
+        display_lines(f, &self.text, lno_chars, self.text_line_off)
     }
 }
 
@@ -692,11 +700,46 @@ mod tests {
 
     #[test]
     fn error_display() {
-        let ptn = "a\nb\nc\nd\n";
-        let text = "a\nb\nc\nz\nd\n";
+        let ptn_re = Regex::new("\\$.+?\\b").unwrap();
+        let text_re = Regex::new(".+?\\b").unwrap();
+        let helper = |ptn: &str, text: &str| -> String {
+            let err = FMBuilder::new(ptn)
+                .unwrap()
+                .name_matcher(Some((ptn_re.clone(), text_re.clone())))
+                .build()
+                .unwrap()
+                .matches(text)
+                .unwrap_err();
+            format!("{}", err)
+        };
 
-        let er = FMatcher::new(ptn).unwrap().matches(&text).unwrap_err();
-        let msg = format!("{}", &er);
-        assert!(msg.contains("\n>>  4: z\n"));
+        assert_eq!(
+            helper("a\nb\nc\nd\n", "a\nb\nc\nz\nd\n"),
+            "Pattern (error at line 4):
+    1: a
+    2: b
+    3: c
+>>  4: d
+
+Text (error at line 4):
+    1: a
+    2: b
+    3: c
+>>  4: z
+"
+        );
+
+        assert_eq!(
+            helper("a\n", "a\n\nb"),
+            "Pattern (error at line 2):
+   1: a
+>> 2:
+
+Text (error at line 3):
+   1: a
+   2:
+>> 3: b
+"
+        );
     }
 }
