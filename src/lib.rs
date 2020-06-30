@@ -208,7 +208,8 @@ impl<'a> FMatcher<'a> {
     pub fn matches(&self, text: &str) -> Result<(), FMatchError> {
         let mut names = HashMap::new();
         let mut ptn_lines = self.ptn.lines();
-        let (mut ptnl, _) = self.skip_blank_lines(&mut ptn_lines, None);
+        let (mut ptnl, mut ptn_lines_off) = self.skip_blank_lines(&mut ptn_lines, None);
+        ptn_lines_off += 1;
         let mut text_lines = text.lines();
         let (mut textl, mut text_lines_off) = self.skip_blank_lines(&mut text_lines, None);
         text_lines_off += 1;
@@ -217,6 +218,7 @@ impl<'a> FMatcher<'a> {
                 (Some(x), Some(y)) => {
                     if x.trim() == WILDCARD {
                         ptnl = ptn_lines.next();
+                        ptn_lines_off += 1;
                         match ptnl {
                             Some(x) => {
                                 while let Some(y) = textl {
@@ -232,12 +234,14 @@ impl<'a> FMatcher<'a> {
                         }
                     } else if self.match_line(&mut names, x, y) {
                         ptnl = ptn_lines.next();
+                        ptn_lines_off += 1;
                         textl = text_lines.next();
                         text_lines_off += 1;
                     } else {
                         return Err(FMatchError {
                             ptn: self.ptn.to_owned(),
                             text: text.to_owned(),
+                            ptn_line_off: ptn_lines_off,
                             text_line_off: text_lines_off,
                         });
                     }
@@ -246,24 +250,29 @@ impl<'a> FMatcher<'a> {
                 (Some(x), None) => {
                     if x.trim() == WILDCARD {
                         while let Some(ptnl) = ptn_lines.next() {
+                            ptn_lines_off += 1;
                             if !self.match_line(&mut names, ptnl, "") {
                                 return Err(FMatchError {
                                     ptn: self.ptn.to_owned(),
                                     text: text.to_owned(),
+                                    ptn_line_off: ptn_lines_off,
                                     text_line_off: text_lines_off,
                                 });
                             }
                         }
                         return Ok(());
                     } else {
-                        if self.skip_blank_lines(&mut ptn_lines, Some(x)).0.is_none() {
-                            return Ok(());
+                        match self.skip_blank_lines(&mut ptn_lines, Some(x)) {
+                            (Some(_), skipped) => {
+                                return Err(FMatchError {
+                                    ptn: self.ptn.to_owned(),
+                                    text: text.to_owned(),
+                                    ptn_line_off: ptn_lines_off + skipped,
+                                    text_line_off: text_lines_off,
+                                });
+                            }
+                            (None, _) => return Ok(()),
                         }
-                        return Err(FMatchError {
-                            ptn: self.ptn.to_owned(),
-                            text: text.to_owned(),
-                            text_line_off: text_lines_off,
-                        });
                     }
                 }
                 (None, Some(x)) => {
@@ -274,6 +283,7 @@ impl<'a> FMatcher<'a> {
                     return Err(FMatchError {
                         ptn: self.ptn.to_owned(),
                         text: text.to_owned(),
+                        ptn_line_off: ptn_lines_off,
                         text_line_off: text_lines_off + skipped,
                     });
                 }
@@ -397,10 +407,15 @@ impl<'a> FMatcher<'a> {
 pub struct FMatchError {
     ptn: String,
     text: String,
+    ptn_line_off: usize,
     text_line_off: usize,
 }
 
 impl FMatchError {
+    pub fn ptn_line_off(&self) -> usize {
+        self.ptn_line_off
+    }
+
     pub fn text_line_off(&self) -> usize {
         self.text_line_off
     }
@@ -574,42 +589,44 @@ mod tests {
     }
 
     #[test]
-    fn error_line() {
+    fn error_lines() {
         let ptn_re = Regex::new("\\$.+?\\b").unwrap();
         let text_re = Regex::new(".+?\\b").unwrap();
-        let helper = |ptn: &str, text: &str| -> usize {
-            FMBuilder::new(ptn)
+        let helper = |ptn: &str, text: &str| -> (usize, usize) {
+            let err = FMBuilder::new(ptn)
                 .unwrap()
                 .name_matcher(Some((ptn_re.clone(), text_re.clone())))
                 .build()
                 .unwrap()
                 .matches(text)
-                .unwrap_err()
-                .text_line_off()
+                .unwrap_err();
+            (err.ptn_line_off(), err.text_line_off())
         };
 
-        assert_eq!(helper("a\n...\nd", "a\nb\nc"), 3);
-        assert_eq!(helper("a\nb...", "a\nb\nc"), 3);
-        assert_eq!(helper("a\n...b...", "a\nxb\nc"), 3);
+        assert_eq!(helper("a\n...\nd", "a\nb\nc"), (3, 3));
+        assert_eq!(helper("a\nb...", "a\nb\nc"), (3, 3));
+        assert_eq!(helper("a\n...b...", "a\nxb\nc"), (3, 3));
 
-        assert_eq!(helper("a\n\nb", "a\n"), 2);
-        assert_eq!(helper("a\n", "a\n\nb"), 3);
+        assert_eq!(helper("a\n\nb", "a\n"), (3, 2));
+        assert_eq!(helper("a\n", "a\n\nb"), (2, 3));
 
-        assert_eq!(helper("$1", ""), 1);
-        assert_eq!(helper("$1, $1", "a, b"), 1);
-        assert_eq!(helper("$1, a, $1", "a, b, a"), 1);
-        assert_eq!(helper("$1, a, $1", "a, a, b"), 1);
-        assert_eq!(helper("$1, $1, a", "a, a, b"), 1);
-        assert_eq!(helper("$1, $1, a", "a, b, a"), 1);
+        assert_eq!(helper("$1", ""), (1, 1));
+        assert_eq!(helper("$1, $1", "a, b"), (1, 1));
+        assert_eq!(helper("$1, a, $1", "a, b, a"), (1, 1));
+        assert_eq!(helper("$1, a, $1", "a, a, b"), (1, 1));
+        assert_eq!(helper("$1, $1, a", "a, a, b"), (1, 1));
+        assert_eq!(helper("$1, $1, a", "a, b, a"), (1, 1));
 
-        assert_eq!(helper("$1", ""), 1);
-        assert_eq!(helper("$1\n$1", "a\nb"), 2);
-        assert_eq!(helper("$1\na\n$1", "a\nb\na"), 2);
-        assert_eq!(helper("$1\na\n$1", "a\na\nb"), 3);
-        assert_eq!(helper("$1\n$1\na", "a\na\nb"), 3);
-        assert_eq!(helper("$1\n$1\na", "a\nb\na"), 2);
+        assert_eq!(helper("$1", ""), (1, 1));
+        assert_eq!(helper("$1\n$1", "a\nb"), (2, 2));
+        assert_eq!(helper("$1\na\n$1", "a\nb\na"), (2, 2));
+        assert_eq!(helper("$1\na\n$1", "a\na\nb"), (3, 3));
+        assert_eq!(helper("$1\n$1\na", "a\na\nb"), (3, 3));
+        assert_eq!(helper("$1\n$1\na", "a\nb\na"), (2, 2));
 
-        assert_eq!(helper("...\nb\nc\nd\n", "a\nb\nc\n0\ne"), 4);
+        assert_eq!(helper("...\nb\nc\nd\n", "a\nb\nc\n0\ne"), (4, 4));
+        assert_eq!(helper("...\nc\nd\n", "a\nb\nc\n0\ne"), (3, 4));
+        assert_eq!(helper("...\nd\n", "a\nb\nc\n0\ne"), (2, 5));
     }
 
     #[test]
