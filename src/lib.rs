@@ -190,64 +190,6 @@ impl<'a> FMBuilder<'a> {
     }
 }
 
-/// An error indicating a failed match.
-/// The pattern and text are copied in so that the error isn't tied to their lifetimes.
-pub struct FMatchError {
-    ptn: String,
-    text: String,
-    fail_line: usize,
-}
-
-impl FMatchError {
-    pub fn failure_line(&self) -> usize {
-        self.fail_line
-    }
-}
-
-impl fmt::Display for FMatchError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        // Figure out how many characters are required for the line numbers margin.
-        let max_lines = usize::max(self.ptn.len(), self.text.len());
-        let lno_chars = format!("{}", max_lines).len();
-
-        fn display_lines(
-            f: &mut fmt::Formatter,
-            s: &str,
-            lno_chars: usize,
-            mark_line: Option<usize>,
-        ) -> fmt::Result {
-            for (num, line) in s.lines().enumerate() {
-                let mark = match mark_line {
-                    Some(ml) if ml == num + 1 => ">> ",
-                    _ => "   ",
-                };
-                writeln!(f, "{}{:width$}: {}", mark, num + 1, line, width = lno_chars)?;
-            }
-            Ok(())
-        }
-
-        writeln!(f, "Failed to match at line {}.\n", self.failure_line())?;
-        writeln!(f, "Pattern:")?;
-        display_lines(f, &self.ptn, lno_chars, None)?;
-        writeln!(f, "\nText:")?;
-        display_lines(f, &self.text, lno_chars, Some(self.fail_line))
-    }
-}
-
-/// A short error message. We don't reuse the longer message from `Display` as a Rust panic
-/// uses `Debug` and doesn't interpret formatting characters when printing the panic message.
-impl fmt::Debug for FMatchError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Failed to match at line {}", self.fail_line)
-    }
-}
-
-impl Error for FMatchError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        None
-    }
-}
-
 /// The fuzzy matcher.
 #[derive(Debug)]
 pub struct FMatcher<'a> {
@@ -448,6 +390,64 @@ impl<'a> FMatcher<'a> {
                 None => ptn == text,
             }
         }
+    }
+}
+
+/// An error indicating a failed match.
+/// The pattern and text are copied in so that the error isn't tied to their lifetimes.
+pub struct FMatchError {
+    ptn: String,
+    text: String,
+    fail_line: usize,
+}
+
+impl FMatchError {
+    pub fn failure_line(&self) -> usize {
+        self.fail_line
+    }
+}
+
+impl fmt::Display for FMatchError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        // Figure out how many characters are required for the line numbers margin.
+        let max_lines = usize::max(self.ptn.len(), self.text.len());
+        let lno_chars = format!("{}", max_lines).len();
+
+        fn display_lines(
+            f: &mut fmt::Formatter,
+            s: &str,
+            lno_chars: usize,
+            mark_line: Option<usize>,
+        ) -> fmt::Result {
+            for (num, line) in s.lines().enumerate() {
+                let mark = match mark_line {
+                    Some(ml) if ml == num + 1 => ">> ",
+                    _ => "   ",
+                };
+                writeln!(f, "{}{:width$}: {}", mark, num + 1, line, width = lno_chars)?;
+            }
+            Ok(())
+        }
+
+        writeln!(f, "Failed to match at line {}.\n", self.failure_line())?;
+        writeln!(f, "Pattern:")?;
+        display_lines(f, &self.ptn, lno_chars, None)?;
+        writeln!(f, "\nText:")?;
+        display_lines(f, &self.text, lno_chars, Some(self.fail_line))
+    }
+}
+
+/// A short error message. We don't reuse the longer message from `Display` as a Rust panic
+/// uses `Debug` and doesn't interpret formatting characters when printing the panic message.
+impl fmt::Debug for FMatchError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Failed to match at line {}", self.fail_line)
+    }
+}
+
+impl Error for FMatchError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        None
     }
 }
 
