@@ -62,6 +62,7 @@ const WILDCARD: &str = "...";
 #[derive(Debug)]
 struct FMOptions {
     name_matcher: Option<(Regex, Regex)>,
+    distinct_name_matching: bool,
     ignore_leading_whitespace: bool,
     ignore_trailing_whitespace: bool,
     ignore_surrounding_blank_lines: bool,
@@ -71,6 +72,7 @@ impl Default for FMOptions {
     fn default() -> Self {
         FMOptions {
             name_matcher: None,
+            distinct_name_matching: false,
             ignore_leading_whitespace: true,
             ignore_trailing_whitespace: true,
             ignore_surrounding_blank_lines: true,
@@ -133,6 +135,14 @@ impl<'a> FMBuilder<'a> {
     /// the above example, `...$1` would lead to a pattern validation error).
     pub fn name_matcher(mut self, matcher: Option<(Regex, Regex)>) -> Self {
         self.options.name_matcher = matcher;
+        self
+    }
+
+    /// If `yes`, then different names cannot match the same text value. For example if `$1` binds
+    /// to `a` then `$2` will refuse to match against `a` (though `$1` will continue to match
+    /// against only `a`). Defaults to `false`.
+    pub fn distinct_name_matching(mut self, yes: bool) -> Self {
+        self.options.distinct_name_matching = yes;
         self
     }
 
@@ -406,6 +416,15 @@ impl<'a> FMatcher<'a> {
                         ptn = &ptn[ptnm.end()..];
                         text = &text[ptnm.start()..];
                         if let Some(textm) = text_re.find(text) {
+                            if self.options.distinct_name_matching {
+                                for (x, y) in names.iter() {
+                                    if x != &ptnm.as_str() {
+                                        if y == &textm.as_str() {
+                                            return false;
+                                        }
+                                    }
+                                }
+                            }
                             if textm.start() == textm.end() {
                                 panic!("Text pattern matched the empty string.");
                             }
@@ -633,6 +652,26 @@ mod tests {
             &(*(builder.build().unwrap_err())).to_string(),
             "Can't mix name matching with wildcards on line 2."
         );
+    }
+
+    #[test]
+    fn distinct_names() {
+        let nameptn_re = Regex::new(r"\$.+?\b").unwrap();
+        let name_re = Regex::new(r".+?\b").unwrap();
+        let helper = |ptn: &str, text: &str| -> bool {
+            FMBuilder::new(ptn)
+                .unwrap()
+                .name_matcher(Some((nameptn_re.clone(), name_re.clone())))
+                .distinct_name_matching(true)
+                .build()
+                .unwrap()
+                .matches(text)
+                .is_ok()
+        };
+
+        assert!(helper("$1 $1", "a a"));
+        assert!(!helper("$1 $1", "a b"));
+        assert!(!helper("$1 $2", "a a"));
     }
 
     #[test]
