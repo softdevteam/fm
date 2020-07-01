@@ -430,9 +430,9 @@ impl fmt::Display for FMatchError {
 
         let display_lines =
             |f: &mut fmt::Formatter, s: &str, lno_chars: usize, mark_line: usize| -> fmt::Result {
-                let mut num_lines = 0;
-                for (i, line) in s.lines().enumerate() {
-                    if mark_line == i + 1 {
+                let mut i = 1;
+                for line in s.lines() {
+                    if mark_line == i {
                         write!(
                             f,
                             "{} {}",
@@ -447,12 +447,12 @@ impl fmt::Display for FMatchError {
                     } else {
                         writeln!(f, "|{}", line)?;
                     }
-                    num_lines += 1;
-                    if mark_line == i + 1 {
+                    i += 1;
+                    if mark_line == i - 1 {
                         break;
                     }
                 }
-                if mark_line == num_lines + 1 {
+                if mark_line == i {
                     writeln!(f, "{}", ERROR_MARKER)?;
                 }
                 Ok(())
