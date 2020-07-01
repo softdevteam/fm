@@ -58,6 +58,7 @@ use std::{
 use regex::Regex;
 
 const WILDCARD: &str = "...";
+const ERROR_MARKER: &str = ">>";
 
 #[derive(Debug)]
 struct FMOptions {
@@ -423,33 +424,39 @@ impl FMatchError {
 impl fmt::Display for FMatchError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         // Figure out how many characters are required for the line numbers margin.
-        let max_lines = usize::max(self.ptn.len(), self.text.len());
-        let lno_chars = format!("{}", max_lines).len();
+        let max_line = usize::max(self.ptn_line_off, self.text_line_off);
+        let err_mk_chars = ERROR_MARKER.chars().count() + ' '.len_utf8();
+        let lno_chars = usize::max(err_mk_chars, format!("{}", max_line).len());
 
-        fn display_lines(
-            f: &mut fmt::Formatter,
-            s: &str,
-            lno_chars: usize,
-            mark_line: usize,
-        ) -> fmt::Result {
-            let mut num_lines = 0;
-            for (i, line) in s.lines().enumerate() {
-                let mark = if mark_line == i + 1 { ">> " } else { "   " };
-                if line.is_empty() {
-                    writeln!(f, "{}{:width$}:", mark, i + 1, width = lno_chars)?;
-                } else {
-                    writeln!(f, "{}{:width$}: {}", mark, i + 1, line, width = lno_chars)?;
+        let display_lines =
+            |f: &mut fmt::Formatter, s: &str, lno_chars: usize, mark_line: usize| -> fmt::Result {
+                let mut num_lines = 0;
+                for (i, line) in s.lines().enumerate() {
+                    if mark_line == i + 1 {
+                        write!(
+                            f,
+                            "{} {}",
+                            ERROR_MARKER,
+                            " ".repeat(err_mk_chars - err_mk_chars)
+                        )?;
+                    } else {
+                        write!(f, "{}", " ".repeat(lno_chars))?;
+                    }
+                    if line.is_empty() {
+                        writeln!(f, "|")?;
+                    } else {
+                        writeln!(f, "|{}", line)?;
+                    }
+                    num_lines += 1;
+                    if mark_line == i + 1 {
+                        break;
+                    }
                 }
-                num_lines += 1;
-                if mark_line == i + 1 {
-                    break;
+                if mark_line == num_lines + 1 {
+                    writeln!(f, "{}", ERROR_MARKER)?;
                 }
-            }
-            if mark_line == num_lines + 1 {
-                writeln!(f, ">> {:width$}:", num_lines + 1, width = lno_chars)?;
-            }
-            Ok(())
-        }
+                Ok(())
+            };
 
         writeln!(f, "Pattern (error at line {}):", self.ptn_line_off)?;
         display_lines(f, &self.ptn, lno_chars, self.ptn_line_off)?;
@@ -715,29 +722,29 @@ mod tests {
         assert_eq!(
             helper("a\nb\nc\nd\n", "a\nb\nc\nz\nd\n"),
             "Pattern (error at line 4):
-    1: a
-    2: b
-    3: c
->>  4: d
+   |a
+   |b
+   |c
+>> |d
 
 Text (error at line 4):
-    1: a
-    2: b
-    3: c
->>  4: z
+   |a
+   |b
+   |c
+>> |z
 "
         );
 
         assert_eq!(
             helper("a\n", "a\n\nb"),
             "Pattern (error at line 2):
-   1: a
->> 2:
+   |a
+>>
 
 Text (error at line 3):
-   1: a
-   2:
->> 3: b
+   |a
+   |
+>> |b
 "
         );
     }
