@@ -147,13 +147,15 @@ impl<'a> FMBuilder<'a> {
         self
     }
 
-    #[doc(hidden)]
+    /// If `yes`, then each line's leading whitespace will be ignored in both pattern and text;
+    /// otherwise leading whitespace must match. Defaults to `true`.
     pub fn ignore_leading_whitespace(mut self, yes: bool) -> Self {
         self.options.ignore_leading_whitespace = yes;
         self
     }
 
-    #[doc(hidden)]
+    /// If `yes`, then each line's trailing whitespace will be ignored in both pattern and text;
+    /// otherwise trailing whitespace must match. Defaults to `true`.
     pub fn ignore_trailing_whitespace(mut self, yes: bool) -> Self {
         self.options.ignore_trailing_whitespace = yes;
         self
@@ -336,15 +338,11 @@ impl<'a> FMatcher<'a> {
         if self.options.ignore_leading_whitespace {
             ptn = ptn.trim_start();
             text = text.trim_start();
-        } else {
-            todo!();
         }
 
         if self.options.ignore_trailing_whitespace {
             ptn = ptn.trim_end();
             text = text.trim_end();
-        } else {
-            todo!();
         }
 
         let sww = ptn.starts_with(WILDCARD);
@@ -747,5 +745,29 @@ Text (error at line 3):
 >> |b
 "
         );
+    }
+
+    #[test]
+    fn test_allow_whitespace() {
+        let helper = |ptn: &str, text: &str| -> bool {
+            FMBuilder::new(ptn)
+                .unwrap()
+                .ignore_leading_whitespace(false)
+                .ignore_trailing_whitespace(false)
+                .build()
+                .unwrap()
+                .matches(text)
+                .is_ok()
+        };
+
+        assert!(helper("a\na", "a\na"));
+
+        assert!(helper("a\n a", "a\n a"));
+        assert!(!helper("a\n a", "a\na"));
+        assert!(!helper("a\na", "a\n a"));
+
+        assert!(helper("a\na ", "a\na "));
+        assert!(!helper("a\na", "a\na "));
+        assert!(!helper("a\na ", "a\na"));
     }
 }
