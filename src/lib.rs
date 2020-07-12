@@ -57,6 +57,7 @@ use std::{
 
 use regex::Regex;
 
+const ERROR_CONTEXT: usize = 3;
 const WILDCARD: &str = "...";
 const ERROR_MARKER: &str = ">>";
 
@@ -426,7 +427,16 @@ impl fmt::Display for FMatchError {
 
         let display_lines = |f: &mut fmt::Formatter, s: &str, mark_line: usize| -> fmt::Result {
             let mut i = 1;
+            if mark_line.checked_sub(ERROR_CONTEXT + 2).is_some() {
+                writeln!(f, "{}...", " ".repeat(err_mk_chars))?;
+            }
             for line in s.lines() {
+                if let Some(j) = mark_line.checked_sub(ERROR_CONTEXT) {
+                    if i < j {
+                        i += 1;
+                        continue;
+                    }
+                }
                 if mark_line == i {
                     write!(f, "{} ", ERROR_MARKER)?;
                 } else {
@@ -438,12 +448,18 @@ impl fmt::Display for FMatchError {
                     writeln!(f, "|{}", line)?;
                 }
                 i += 1;
-                if mark_line == i - 1 {
-                    break;
+                if let Some(j) = mark_line.checked_add(ERROR_CONTEXT) {
+                    if i > j {
+                        break;
+                    }
                 }
             }
             if mark_line == i {
                 writeln!(f, "{}", ERROR_MARKER)?;
+            } else if let Some(j) = mark_line.checked_add(ERROR_CONTEXT) {
+                if i > j {
+                    writeln!(f, "{}...", " ".repeat(err_mk_chars))?;
+                }
             }
             Ok(())
         };
@@ -722,6 +738,7 @@ Text (error at line 4):
    |b
    |c
 >> |z
+   |d
 "
         );
 
@@ -735,6 +752,42 @@ Text (error at line 3):
    |a
    |
 >> |b
+"
+        );
+
+        let mut ptn = String::new();
+        let mut text = String::new();
+        for i in 1..1000 {
+            ptn.push_str(&format!("a{}\n", i));
+            text.push_str(&format!("a{}\n", i));
+        }
+        for i in 1000..1100 {
+            ptn.push_str(&format!("a{}\n", i));
+            text.push_str(&format!("a{}\n", i + 1));
+        }
+        assert_eq!(
+            helper(&ptn, &text),
+            "Pattern (error at line 1000):
+   ...
+   |a997
+   |a998
+   |a999
+>> |a1000
+   |a1001
+   |a1002
+   |a1003
+   ...
+
+Text (error at line 1000):
+   ...
+   |a997
+   |a998
+   |a999
+>> |a1001
+   |a1002
+   |a1003
+   |a1004
+   ...
 "
         );
     }
