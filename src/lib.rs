@@ -57,6 +57,7 @@ use std::{
 
 use regex::Regex;
 
+const ERROR_CONTEXT: usize = 3;
 const WILDCARD: &str = "...";
 const ERROR_MARKER: &str = ">>";
 
@@ -423,44 +424,51 @@ impl FMatchError {
 impl fmt::Display for FMatchError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         // Figure out how many characters are required for the line numbers margin.
-        let max_line = usize::max(self.ptn_line_off, self.text_line_off);
         let err_mk_chars = ERROR_MARKER.chars().count() + ' '.len_utf8();
-        let lno_chars = usize::max(err_mk_chars, format!("{}", max_line).len());
 
-        let display_lines =
-            |f: &mut fmt::Formatter, s: &str, lno_chars: usize, mark_line: usize| -> fmt::Result {
-                let mut i = 1;
-                for line in s.lines() {
-                    if mark_line == i {
-                        write!(
-                            f,
-                            "{} {}",
-                            ERROR_MARKER,
-                            " ".repeat(err_mk_chars - err_mk_chars)
-                        )?;
-                    } else {
-                        write!(f, "{}", " ".repeat(lno_chars))?;
-                    }
-                    if line.is_empty() {
-                        writeln!(f, "|")?;
-                    } else {
-                        writeln!(f, "|{}", line)?;
-                    }
-                    i += 1;
-                    if mark_line == i - 1 {
-                        break;
+        let display_lines = |f: &mut fmt::Formatter, s: &str, mark_line: usize| -> fmt::Result {
+            let mut i = 1;
+            if mark_line.checked_sub(ERROR_CONTEXT + 2).is_some() {
+                writeln!(f, "{}...", " ".repeat(err_mk_chars))?;
+            }
+            for line in s.lines() {
+                if let Some(j) = mark_line.checked_sub(ERROR_CONTEXT) {
+                    if i < j {
+                        i += 1;
+                        continue;
                     }
                 }
                 if mark_line == i {
-                    writeln!(f, "{}", ERROR_MARKER)?;
+                    write!(f, "{} ", ERROR_MARKER)?;
+                } else {
+                    write!(f, "{}", " ".repeat(err_mk_chars))?;
                 }
-                Ok(())
-            };
+                if line.is_empty() {
+                    writeln!(f, "|")?;
+                } else {
+                    writeln!(f, "|{}", line)?;
+                }
+                i += 1;
+                if let Some(j) = mark_line.checked_add(ERROR_CONTEXT) {
+                    if i > j {
+                        break;
+                    }
+                }
+            }
+            if mark_line == i {
+                writeln!(f, "{}", ERROR_MARKER)?;
+            } else if let Some(j) = mark_line.checked_add(ERROR_CONTEXT) {
+                if i > j {
+                    writeln!(f, "{}...", " ".repeat(err_mk_chars))?;
+                }
+            }
+            Ok(())
+        };
 
         writeln!(f, "Pattern (error at line {}):", self.ptn_line_off)?;
-        display_lines(f, &self.ptn, lno_chars, self.ptn_line_off)?;
+        display_lines(f, &self.ptn, self.ptn_line_off)?;
         writeln!(f, "\nText (error at line {}):", self.text_line_off)?;
-        display_lines(f, &self.text, lno_chars, self.text_line_off)
+        display_lines(f, &self.text, self.text_line_off)
     }
 }
 
@@ -731,6 +739,7 @@ Text (error at line 4):
    |b
    |c
 >> |z
+   |d
 "
         );
 
@@ -744,6 +753,42 @@ Text (error at line 3):
    |a
    |
 >> |b
+"
+        );
+
+        let mut ptn = String::new();
+        let mut text = String::new();
+        for i in 1..1000 {
+            ptn.push_str(&format!("a{}\n", i));
+            text.push_str(&format!("a{}\n", i));
+        }
+        for i in 1000..1100 {
+            ptn.push_str(&format!("a{}\n", i));
+            text.push_str(&format!("a{}\n", i + 1));
+        }
+        assert_eq!(
+            helper(&ptn, &text),
+            "Pattern (error at line 1000):
+   ...
+   |a997
+   |a998
+   |a999
+>> |a1000
+   |a1001
+   |a1002
+   |a1003
+   ...
+
+Text (error at line 1000):
+   ...
+   |a997
+   |a998
+   |a999
+>> |a1001
+   |a1002
+   |a1003
+   |a1004
+   ...
 "
         );
     }
