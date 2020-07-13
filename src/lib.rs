@@ -402,6 +402,7 @@ impl<'a> FMatcher<'a> {
 
 /// An error indicating a failed match.
 /// The pattern and text are copied in so that the error isn't tied to their lifetimes.
+#[derive(PartialEq)]
 pub struct FMatchError {
     ptn: String,
     text: String,
