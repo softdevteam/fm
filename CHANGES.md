@@ -1,3 +1,9 @@
+# fm 0.1.3 (2020-07-21)
+
+* Fix bug where, if name matching is turned on, lines which failed to match
+  could incorrectly add to the name dictionary.
+
+
 # fm 0.1.2 (2020-07-13)
 
 * Show at most 3 lines of context either side of an error line. This means that
