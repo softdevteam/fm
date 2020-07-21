@@ -330,6 +330,8 @@ impl<'a> FMatcher<'a> {
         (None, trimmed)
     }
 
+    /// Try matching `ptn` against `text`. If, and only if, the match is successful, `names` will
+    /// be updated with matched names.
     fn match_line<'b>(
         &self,
         names: &mut HashMap<&'a str, &'b str>,
@@ -358,6 +360,7 @@ impl<'a> FMatcher<'a> {
         } else {
             match self.options.name_matcher {
                 Some((ref ptn_re, ref text_re)) => {
+                    let mut new_names = HashMap::new();
                     while let Some(ptnm) = ptn_re.find(ptn) {
                         if ptnm.start() == ptnm.end() {
                             panic!("Name pattern matched the empty string.");
@@ -369,7 +372,7 @@ impl<'a> FMatcher<'a> {
                         text = &text[ptnm.start()..];
                         if let Some(textm) = text_re.find(text) {
                             if self.options.distinct_name_matching {
-                                for (x, y) in names.iter() {
+                                for (x, y) in names.iter().chain(new_names.iter()) {
                                     if x != &ptnm.as_str() && y == &textm.as_str() {
                                         return false;
                                     }
@@ -384,16 +387,28 @@ impl<'a> FMatcher<'a> {
                                         return false;
                                     }
                                 }
-                                Entry::Vacant(e) => {
-                                    e.insert(textm.as_str());
-                                }
+                                Entry::Vacant(_) => match new_names.entry(ptnm.as_str()) {
+                                    Entry::Occupied(e) => {
+                                        if e.get() != &textm.as_str() {
+                                            return false;
+                                        }
+                                    }
+                                    Entry::Vacant(e) => {
+                                        e.insert(textm.as_str());
+                                    }
+                                },
                             }
                             text = &text[textm.end()..];
                         } else {
                             return false;
                         }
                     }
-                    ptn == text
+                    if ptn == text {
+                        names.extend(new_names);
+                        true
+                    } else {
+                        false
+                    }
                 }
                 None => ptn == text,
             }
@@ -607,6 +622,7 @@ mod tests {
         assert!(helper("$1, $1, a", "a, a, a"));
         assert!(!helper("$1, $1, a", "a, a, b"));
         assert!(!helper("$1, $1, a", "a, b, a"));
+        assert!(helper("$1 $2\n...\n$3 $2", "a X\nb Y\nc X"));
     }
 
     #[test]
