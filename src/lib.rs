@@ -365,7 +365,8 @@ impl<'a> FMatcher<'a> {
                         if ptnm.start() == ptnm.end() {
                             panic!("Name pattern matched the empty string.");
                         }
-                        if ptn[..ptnm.start()] != text[..ptnm.start()] {
+                        if ptnm.start() > text.len() || ptn[..ptnm.start()] != text[..ptnm.start()]
+                        {
                             return false;
                         }
                         ptn = &ptn[ptnm.end()..];
@@ -623,6 +624,7 @@ mod tests {
         assert!(!helper("$1, $1, a", "a, a, b"));
         assert!(!helper("$1, $1, a", "a, b, a"));
         assert!(helper("$1 $2\n...\n$3 $2", "a X\nb Y\nc X"));
+        assert!(!helper("ab$a", "a"));
     }
 
     #[test]
