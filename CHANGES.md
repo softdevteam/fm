@@ -1,3 +1,11 @@
+# fm 0.1.4 (2020-07-22)
+
+* Add ability to use wildcards at the end of lines when name matching is used
+  (so `$1...` is allowed but `...$1` and `...$1...` are still unallowed).
+
+* Fix crash caused when the remaining pattern exceeds the remaining text.
+
+
 # fm 0.1.3 (2020-07-21)
 
 * Fix bug where, if name matching is turned on, lines which failed to match
