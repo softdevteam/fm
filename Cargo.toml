@@ -2,7 +2,7 @@
 name = "fm"
 description = "Non-backtracking fuzzy text matcher"
 repository = "https://github.com/softdevteam/fm/"
-version = "0.1.3"
+version = "0.1.4"
 authors = ["Edd Barrett <vext01@gmail.com>", "Laurence Tratt <laurie@tratt.net>"]
 readme = "README.md"
 license = "Apache-2.0/MIT"
