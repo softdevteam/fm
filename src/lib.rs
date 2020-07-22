@@ -133,8 +133,10 @@ impl<'a> FMBuilder<'a> {
     /// assert!(matcher.matches("a b b").is_err());
     /// ```
     ///
-    /// Note that name matching and wildcards cannot be used together in a single line (e.g. for
-    /// the above example, `...$1` would lead to a pattern validation error).
+    /// Note that if a line in the pattern uses name matching, it can *only* use the wildcard
+    /// operator at the end of the line (so, for the above name matcher, `$1...` is allowed but
+    /// `...$1` or `...$1...` is not allowed). Invalid combinations of wildcards and name matching
+    /// are caught when a pattern is built.
     pub fn name_matcher(mut self, matcher: Option<(Regex, Regex)>) -> Self {
         self.options.name_matcher = matcher;
         self
@@ -182,9 +184,9 @@ impl<'a> FMBuilder<'a> {
         if let Some((ref ptn_re, _)) = self.options.name_matcher {
             for (i, l) in self.ptn.lines().enumerate() {
                 let l = l.trim();
-                if (l.starts_with("...") || l.ends_with("...")) && ptn_re.is_match(l) {
+                if l.starts_with("...") && ptn_re.is_match(l) {
                     return Err(Box::<dyn Error>::from(format!(
-                        "Can't mix name matching with wildcards on line {}.",
+                        "Can't mix name matching with wildcards at start of line {}.",
                         i + 1
                     )));
                 }
@@ -355,8 +357,6 @@ impl<'a> FMatcher<'a> {
                 .is_some()
         } else if sww {
             text.ends_with(&ptn[WILDCARD.len()..])
-        } else if eww {
-            text.starts_with(&ptn[..ptn.len() - WILDCARD.len()])
         } else {
             match self.options.name_matcher {
                 Some((ref ptn_re, ref text_re)) => {
@@ -404,14 +404,21 @@ impl<'a> FMatcher<'a> {
                             return false;
                         }
                     }
-                    if ptn == text {
+                    if (eww && text.starts_with(&ptn[..ptn.len() - WILDCARD.len()])) || ptn == text
+                    {
                         names.extend(new_names);
                         true
                     } else {
                         false
                     }
                 }
-                None => ptn == text,
+                None => {
+                    if eww {
+                        text.starts_with(&ptn[..ptn.len() - WILDCARD.len()])
+                    } else {
+                        ptn == text
+                    }
+                }
             }
         }
     }
@@ -625,6 +632,13 @@ mod tests {
         assert!(!helper("$1, $1, a", "a, b, a"));
         assert!(helper("$1 $2\n...\n$3 $2", "a X\nb Y\nc X"));
         assert!(!helper("ab$a", "a"));
+        assert!(helper("$1\n$1...", "a\na b c"));
+        assert!(!helper("$1\n$1...", "a\nb b c"));
+        assert!(helper("$1\n$1...", "a\na b c"));
+        assert!(helper("$1\n$1 b...", "a\na b c"));
+        assert!(helper("$1\n$1 b c...", "a\na b c"));
+        assert!(!helper("$1\n$1 b c...\n$1", "a\na b c"));
+        assert!(!helper("$1\n$1 b c...\n$1", "a\na b c\na\nb"));
     }
 
     #[test]
@@ -705,7 +719,7 @@ mod tests {
             .name_matcher(Some((ptn_re, text_re)));
         assert_eq!(
             &(*(builder.build().unwrap_err())).to_string(),
-            "Can't mix name matching with wildcards on line 2."
+            "Can't mix name matching with wildcards at start of line 2."
         );
     }
 
