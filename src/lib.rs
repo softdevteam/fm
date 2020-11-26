@@ -41,7 +41,7 @@
 /// let text_re = Regex::new(r".+?\b").unwrap();
 /// let matcher = FMBuilder::new("$1 $1")
 ///                         .unwrap()
-///                         .name_matcher(Some((ptn_re, text_re)))
+///                         .name_matcher(ptn_re, text_re)
 ///                         .build()
 ///                         .unwrap();
 /// assert!(matcher.matches("a a").is_ok());
@@ -63,7 +63,7 @@ const ERROR_MARKER: &str = ">>";
 
 #[derive(Debug)]
 struct FMOptions {
-    name_matcher: Option<(Regex, Regex)>,
+    name_matchers: Vec<(Regex, Regex)>,
     distinct_name_matching: bool,
     ignore_leading_whitespace: bool,
     ignore_trailing_whitespace: bool,
@@ -73,7 +73,7 @@ struct FMOptions {
 impl Default for FMOptions {
     fn default() -> Self {
         FMOptions {
-            name_matcher: None,
+            name_matchers: Vec::new(),
             distinct_name_matching: false,
             ignore_leading_whitespace: true,
             ignore_trailing_whitespace: true,
@@ -91,7 +91,7 @@ impl Default for FMOptions {
 /// let text_re = Regex::new(r".+?\b").unwrap();
 /// let matcher = FMBuilder::new("$1 $1")
 ///                         .unwrap()
-///                         .name_matcher(Some((ptn_re, text_re)))
+///                         .name_matcher(ptn_re, text_re)
 ///                         .build()
 ///                         .unwrap();
 /// assert!(matcher.matches("a a").is_ok());
@@ -112,12 +112,10 @@ impl<'a> FMBuilder<'a> {
         })
     }
 
-    /// Add a name matcher `Some((ptn_re, text_re))` (or unset it with `None`). Defaults to `None`.
-    ///
-    /// Name matchers allow you to ensure that different parts of the text match without specifying
-    /// precisely what they match. For example, if you have output where you want to ensure that
-    /// two locations always match the same name, but the name is non-deterministic you can allow
-    /// the use of `$` wildcards in your pattern:
+    /// Add a name matcher `(ptn_re, text_re)`. Name matchers allow you to ensure that different
+    /// parts of the text match without specifying precisely what they match. For example, if you
+    /// have output where you want to ensure that two locations always match the same name, but the
+    /// name is non-deterministic you can allow the use of `$` wildcards in your pattern:
     ///
     /// ```rust
     /// use {fm::FMBuilder, regex::Regex};
@@ -126,7 +124,7 @@ impl<'a> FMBuilder<'a> {
     /// let text_re = Regex::new(r".+?\b").unwrap();
     /// let matcher = FMBuilder::new("$1 b $1")
     ///                         .unwrap()
-    ///                         .name_matcher(Some((ptn_re, text_re)))
+    ///                         .name_matcher(ptn_re, text_re)
     ///                         .build()
     ///                         .unwrap();
     /// assert!(matcher.matches("a b a").is_ok());
@@ -137,8 +135,11 @@ impl<'a> FMBuilder<'a> {
     /// operator at the end of the line (so, for the above name matcher, `$1...` is allowed but
     /// `...$1` or `...$1...` is not allowed). Invalid combinations of wildcards and name matching
     /// are caught when a pattern is built.
-    pub fn name_matcher(mut self, matcher: Option<(Regex, Regex)>) -> Self {
-        self.options.name_matcher = matcher;
+    ///
+    /// Multiple name matchers are allowed: they are matched in the order they were added to
+    /// `FMBuilder`.
+    pub fn name_matcher(mut self, ptn_re: Regex, text_re: Regex) -> Self {
+        self.options.name_matchers.push((ptn_re, text_re));
         self
     }
 
@@ -181,7 +182,7 @@ impl<'a> FMBuilder<'a> {
     }
 
     fn validate(&self) -> Result<(), Box<dyn Error>> {
-        if let Some((ref ptn_re, _)) = self.options.name_matcher {
+        for (ref ptn_re, _) in &self.options.name_matchers {
             for (i, l) in self.ptn.lines().enumerate() {
                 let l = l.trim();
                 if l.starts_with("...") && ptn_re.is_match(l) {
@@ -358,66 +359,72 @@ impl<'a> FMatcher<'a> {
         } else if sww {
             text.ends_with(&ptn[WILDCARD.len()..])
         } else {
-            match self.options.name_matcher {
-                Some((ref ptn_re, ref text_re)) => {
-                    let mut new_names = HashMap::new();
-                    while let Some(ptnm) = ptn_re.find(ptn) {
-                        if ptnm.start() == ptnm.end() {
-                            panic!("Name pattern matched the empty string.");
-                        }
-                        if ptnm.start() > text.len() || ptn[..ptnm.start()] != text[..ptnm.start()]
-                        {
-                            return false;
-                        }
-                        ptn = &ptn[ptnm.end()..];
-                        text = &text[ptnm.start()..];
-                        if let Some(textm) = text_re.find(text) {
-                            if self.options.distinct_name_matching {
-                                for (x, y) in names.iter().chain(new_names.iter()) {
-                                    if x != &ptnm.as_str() && y == &textm.as_str() {
-                                        return false;
+            if self.options.name_matchers.is_empty() {
+                if eww {
+                    text.starts_with(&ptn[..ptn.len() - WILDCARD.len()])
+                } else {
+                    ptn == text
+                }
+            } else {
+                let mut new_names = HashMap::new();
+                loop {
+                    let mut matched = false;
+                    for (ref ptn_re, ref text_re) in &self.options.name_matchers {
+                        if let Some(ptnm) = ptn_re.find(ptn) {
+                            matched = true;
+                            if ptnm.start() == ptnm.end() {
+                                panic!("Name pattern matched the empty string.");
+                            }
+                            if ptnm.start() > text.len()
+                                || ptn[..ptnm.start()] != text[..ptnm.start()]
+                            {
+                                return false;
+                            }
+                            ptn = &ptn[ptnm.end()..];
+                            text = &text[ptnm.start()..];
+                            if let Some(textm) = text_re.find(text) {
+                                if self.options.distinct_name_matching {
+                                    for (x, y) in names.iter().chain(new_names.iter()) {
+                                        if x != &ptnm.as_str() && y == &textm.as_str() {
+                                            return false;
+                                        }
                                     }
                                 }
-                            }
-                            if textm.start() == textm.end() {
-                                panic!("Text pattern matched the empty string.");
-                            }
-                            match names.entry(ptnm.as_str()) {
-                                Entry::Occupied(e) => {
-                                    if e.get() != &textm.as_str() {
-                                        return false;
-                                    }
+                                if textm.start() == textm.end() {
+                                    panic!("Text pattern matched the empty string.");
                                 }
-                                Entry::Vacant(_) => match new_names.entry(ptnm.as_str()) {
+                                match names.entry(ptnm.as_str()) {
                                     Entry::Occupied(e) => {
                                         if e.get() != &textm.as_str() {
                                             return false;
                                         }
                                     }
-                                    Entry::Vacant(e) => {
-                                        e.insert(textm.as_str());
-                                    }
-                                },
+                                    Entry::Vacant(_) => match new_names.entry(ptnm.as_str()) {
+                                        Entry::Occupied(e) => {
+                                            if e.get() != &textm.as_str() {
+                                                return false;
+                                            }
+                                        }
+                                        Entry::Vacant(e) => {
+                                            e.insert(textm.as_str());
+                                        }
+                                    },
+                                }
+                                text = &text[textm.end()..];
+                            } else {
+                                return false;
                             }
-                            text = &text[textm.end()..];
-                        } else {
-                            return false;
                         }
                     }
-                    if (eww && text.starts_with(&ptn[..ptn.len() - WILDCARD.len()])) || ptn == text
-                    {
-                        names.extend(new_names);
-                        true
-                    } else {
-                        false
+                    if !matched {
+                        break;
                     }
                 }
-                None => {
-                    if eww {
-                        text.starts_with(&ptn[..ptn.len() - WILDCARD.len()])
-                    } else {
-                        ptn == text
-                    }
+                if (eww && text.starts_with(&ptn[..ptn.len() - WILDCARD.len()])) || ptn == text {
+                    names.extend(new_names);
+                    true
+                } else {
+                    false
                 }
             }
         }
@@ -587,7 +594,7 @@ mod tests {
         let helper = |ptn: &str, text: &str| -> bool {
             FMBuilder::new(ptn)
                 .unwrap()
-                .name_matcher(Some((nameptn_re.clone(), name_re.clone())))
+                .name_matcher(nameptn_re.clone(), name_re.clone())
                 .build()
                 .unwrap()
                 .matches(text)
@@ -642,13 +649,82 @@ mod tests {
     }
 
     #[test]
+    fn multiple_name_matchers() {
+        let nameptn1_re = Regex::new(r"\$.+?\b").unwrap();
+        let nameptn2_re = Regex::new(r"\&.+?\b").unwrap();
+        let name_re = Regex::new(r".+?\b").unwrap();
+        let helper = |ptn: &str, text: &str| -> bool {
+            FMBuilder::new(ptn)
+                .unwrap()
+                .name_matcher(nameptn1_re.clone(), name_re.clone())
+                .name_matcher(nameptn2_re.clone(), name_re.clone())
+                .build()
+                .unwrap()
+                .matches(text)
+                .is_ok()
+        };
+
+        assert!(!helper("$1", ""));
+        assert!(helper("$1", "a"));
+        assert!(helper("$1, $1", "a, a"));
+        assert!(!helper("$1, $1", "a, b"));
+        assert!(helper("$1, a, $1", "a, a, a"));
+        assert!(!helper("$1, a, $1", "a, b, a"));
+        assert!(!helper("$1, a, $1", "a, a, b"));
+        assert!(helper("$1, $1, a", "a, a, a"));
+        assert!(!helper("$1, $1, a", "a, a, b"));
+        assert!(!helper("$1, $1, a", "a, b, a"));
+        assert!(helper("$1 $2\n...\n$3 $2", "a X\nb Y\nc X"));
+        assert!(!helper("ab$a", "a"));
+        assert!(helper("$1\n$1...", "a\na b c"));
+        assert!(!helper("$1\n$1...", "a\nb b c"));
+        assert!(helper("$1\n$1...", "a\na b c"));
+        assert!(helper("$1\n$1 b...", "a\na b c"));
+        assert!(helper("$1\n$1 b c...", "a\na b c"));
+        assert!(!helper("$1\n$1 b c...\n$1", "a\na b c"));
+        assert!(!helper("$1\n$1 b c...\n$1", "a\na b c\na\nb"));
+
+        assert!(!helper("&1", ""));
+        assert!(helper("&1", "a"));
+        assert!(helper("&1, &1", "a, a"));
+        assert!(!helper("&1, &1", "a, b"));
+        assert!(helper("&1, a, &1", "a, a, a"));
+        assert!(!helper("&1, a, &1", "a, b, a"));
+        assert!(!helper("&1, a, &1", "a, a, b"));
+        assert!(helper("&1, &1, a", "a, a, a"));
+        assert!(!helper("&1, &1, a", "a, a, b"));
+        assert!(!helper("&1, &1, a", "a, b, a"));
+        assert!(helper("&1 &2\n...\n&3 &2", "a X\nb Y\nc X"));
+        assert!(!helper("ab&a", "a"));
+        assert!(helper("&1\n&1...", "a\na b c"));
+        assert!(!helper("&1\n&1...", "a\nb b c"));
+        assert!(helper("&1\n&1...", "a\na b c"));
+        assert!(helper("&1\n&1 b...", "a\na b c"));
+        assert!(helper("&1\n&1 b c...", "a\na b c"));
+        assert!(!helper("&1\n&1 b c...\n&1", "a\na b c"));
+        assert!(!helper("&1\n&1 b c...\n&1", "a\na b c\na\nb"));
+
+        assert!(helper("$1 &1", "a a"));
+        assert!(helper("$1 &1", "a b"));
+        assert!(helper("$1 &1 $1", "a b a"));
+        assert!(helper("$1 &1 &1", "a b b"));
+        assert!(!helper("$1 &1 &1", "a b a"));
+        assert!(helper("$1 &2\n...\n$3 &2", "a X\nb Y\nc X"));
+        assert!(helper("$1 &1\n$1 &1...", "a b\na b c d"));
+        assert!(helper("$1 &1\n$1 &1...", "a b\na b"));
+        assert!(!helper("$1 &1\n$1 &1...", "a b\na a c d"));
+        assert!(!helper("$1 &1\n$1 &1 c...\n$1", "a b\na b c"));
+        assert!(!helper("$1 &1\n$1 &1 c...\n$1", "a b\na b c\na\nb"));
+    }
+
+    #[test]
     fn error_lines() {
         let ptn_re = Regex::new("\\$.+?\\b").unwrap();
         let text_re = Regex::new(".+?\\b").unwrap();
         let helper = |ptn: &str, text: &str| -> (usize, usize) {
             let err = FMBuilder::new(ptn)
                 .unwrap()
-                .name_matcher(Some((ptn_re.clone(), text_re.clone())))
+                .name_matcher(ptn_re.clone(), text_re.clone())
                 .build()
                 .unwrap()
                 .matches(text)
@@ -689,7 +765,7 @@ mod tests {
         let text_re = Regex::new(".+?\\b").unwrap();
         FMBuilder::new("$1")
             .unwrap()
-            .name_matcher(Some((ptn_re, text_re)))
+            .name_matcher(ptn_re, text_re)
             .build()
             .unwrap()
             .matches("x")
@@ -703,7 +779,7 @@ mod tests {
         let text_re = Regex::new("").unwrap();
         FMBuilder::new("$1")
             .unwrap()
-            .name_matcher(Some((ptn_re, text_re)))
+            .name_matcher(ptn_re, text_re)
             .build()
             .unwrap()
             .matches("x")
@@ -716,7 +792,7 @@ mod tests {
         let text_re = Regex::new("").unwrap();
         let builder = FMBuilder::new("$1\n...$1abc")
             .unwrap()
-            .name_matcher(Some((ptn_re, text_re)));
+            .name_matcher(ptn_re, text_re);
         assert_eq!(
             &(*(builder.build().unwrap_err())).to_string(),
             "Can't mix name matching with wildcards at start of line 2."
@@ -730,7 +806,7 @@ mod tests {
         let helper = |ptn: &str, text: &str| -> bool {
             FMBuilder::new(ptn)
                 .unwrap()
-                .name_matcher(Some((nameptn_re.clone(), name_re.clone())))
+                .name_matcher(nameptn_re.clone(), name_re.clone())
                 .distinct_name_matching(true)
                 .build()
                 .unwrap()
@@ -750,7 +826,7 @@ mod tests {
         let helper = |ptn: &str, text: &str| -> String {
             let err = FMBuilder::new(ptn)
                 .unwrap()
-                .name_matcher(Some((ptn_re.clone(), text_re.clone())))
+                .name_matcher(ptn_re.clone(), text_re.clone())
                 .build()
                 .unwrap()
                 .matches(text)
