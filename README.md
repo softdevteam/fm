@@ -45,7 +45,7 @@ let ptn_re = Regex::new(r"\$.+?\b").unwrap();
 let text_re = Regex::new(r".+?\b").unwrap();
 let matcher = FMBuilder::new("$1 $1")
                         .unwrap()
-                        .name_matcher(Some((ptn_re, text_re)))
+                        .name_matcher((ptn_re, text_re))
                         .build()
                         .unwrap();
 assert!(matcher.matches("a a").is_ok());
