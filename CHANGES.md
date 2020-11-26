@@ -1,3 +1,17 @@
+# fm 0.2.0 (2020-11-26)
+
+* Multiple name matchers can now be supplied. The API in `FMBuilder` has changed from:
+    ```
+    pub fn name_matcher(mut self, matcher: (Regex, Regex)) -> Self {
+    ```
+  to:
+    ```
+    pub fn name_matcher(mut self, ptn_re: Regex, text_re: Regex) -> Self {
+    ```
+  Calling `name_matcher` multiple times adds additional name matchers; name
+  matchers are matched against text in the order they were added.
+
+
 # fm 0.1.4 (2020-07-22)
 
 * Add ability to use wildcards at the end of lines when name matching is used
