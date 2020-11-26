@@ -41,7 +41,7 @@
 /// let text_re = Regex::new(r".+?\b").unwrap();
 /// let matcher = FMBuilder::new("$1 $1")
 ///                         .unwrap()
-///                         .name_matcher((ptn_re, text_re))
+///                         .name_matcher(ptn_re, text_re)
 ///                         .build()
 ///                         .unwrap();
 /// assert!(matcher.matches("a a").is_ok());
@@ -91,7 +91,7 @@ impl Default for FMOptions {
 /// let text_re = Regex::new(r".+?\b").unwrap();
 /// let matcher = FMBuilder::new("$1 $1")
 ///                         .unwrap()
-///                         .name_matcher((ptn_re, text_re))
+///                         .name_matcher(ptn_re, text_re)
 ///                         .build()
 ///                         .unwrap();
 /// assert!(matcher.matches("a a").is_ok());
@@ -124,7 +124,7 @@ impl<'a> FMBuilder<'a> {
     /// let text_re = Regex::new(r".+?\b").unwrap();
     /// let matcher = FMBuilder::new("$1 b $1")
     ///                         .unwrap()
-    ///                         .name_matcher((ptn_re, text_re))
+    ///                         .name_matcher(ptn_re, text_re)
     ///                         .build()
     ///                         .unwrap();
     /// assert!(matcher.matches("a b a").is_ok());
@@ -138,8 +138,8 @@ impl<'a> FMBuilder<'a> {
     ///
     /// Multiple name matchers are allowed: they are matched in the order they were added to
     /// `FMBuilder`.
-    pub fn name_matcher(mut self, matcher: (Regex, Regex)) -> Self {
-        self.options.name_matchers.push(matcher);
+    pub fn name_matcher(mut self, ptn_re: Regex, text_re: Regex) -> Self {
+        self.options.name_matchers.push((ptn_re, text_re));
         self
     }
 
@@ -594,7 +594,7 @@ mod tests {
         let helper = |ptn: &str, text: &str| -> bool {
             FMBuilder::new(ptn)
                 .unwrap()
-                .name_matcher((nameptn_re.clone(), name_re.clone()))
+                .name_matcher(nameptn_re.clone(), name_re.clone())
                 .build()
                 .unwrap()
                 .matches(text)
@@ -656,8 +656,8 @@ mod tests {
         let helper = |ptn: &str, text: &str| -> bool {
             FMBuilder::new(ptn)
                 .unwrap()
-                .name_matcher((nameptn1_re.clone(), name_re.clone()))
-                .name_matcher((nameptn2_re.clone(), name_re.clone()))
+                .name_matcher(nameptn1_re.clone(), name_re.clone())
+                .name_matcher(nameptn2_re.clone(), name_re.clone())
                 .build()
                 .unwrap()
                 .matches(text)
@@ -724,7 +724,7 @@ mod tests {
         let helper = |ptn: &str, text: &str| -> (usize, usize) {
             let err = FMBuilder::new(ptn)
                 .unwrap()
-                .name_matcher((ptn_re.clone(), text_re.clone()))
+                .name_matcher(ptn_re.clone(), text_re.clone())
                 .build()
                 .unwrap()
                 .matches(text)
@@ -765,7 +765,7 @@ mod tests {
         let text_re = Regex::new(".+?\\b").unwrap();
         FMBuilder::new("$1")
             .unwrap()
-            .name_matcher((ptn_re, text_re))
+            .name_matcher(ptn_re, text_re)
             .build()
             .unwrap()
             .matches("x")
@@ -779,7 +779,7 @@ mod tests {
         let text_re = Regex::new("").unwrap();
         FMBuilder::new("$1")
             .unwrap()
-            .name_matcher((ptn_re, text_re))
+            .name_matcher(ptn_re, text_re)
             .build()
             .unwrap()
             .matches("x")
@@ -792,7 +792,7 @@ mod tests {
         let text_re = Regex::new("").unwrap();
         let builder = FMBuilder::new("$1\n...$1abc")
             .unwrap()
-            .name_matcher((ptn_re, text_re));
+            .name_matcher(ptn_re, text_re);
         assert_eq!(
             &(*(builder.build().unwrap_err())).to_string(),
             "Can't mix name matching with wildcards at start of line 2."
@@ -806,7 +806,7 @@ mod tests {
         let helper = |ptn: &str, text: &str| -> bool {
             FMBuilder::new(ptn)
                 .unwrap()
-                .name_matcher((nameptn_re.clone(), name_re.clone()))
+                .name_matcher(nameptn_re.clone(), name_re.clone())
                 .distinct_name_matching(true)
                 .build()
                 .unwrap()
@@ -826,7 +826,7 @@ mod tests {
         let helper = |ptn: &str, text: &str| -> String {
             let err = FMBuilder::new(ptn)
                 .unwrap()
-                .name_matcher((ptn_re.clone(), text_re.clone()))
+                .name_matcher(ptn_re.clone(), text_re.clone())
                 .build()
                 .unwrap()
                 .matches(text)
