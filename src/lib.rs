@@ -354,78 +354,75 @@ impl<'a> FMatcher<'a> {
         let sww = ptn.starts_with(WILDCARD);
         let eww = ptn.ends_with(WILDCARD);
         if sww && eww {
-            text.find(&ptn[WILDCARD.len()..ptn.len() - WILDCARD.len()])
-                .is_some()
+            text.contains(&ptn[WILDCARD.len()..ptn.len() - WILDCARD.len()])
         } else if sww {
             text.ends_with(&ptn[WILDCARD.len()..])
-        } else {
-            if self.options.name_matchers.is_empty() {
-                if eww {
-                    text.starts_with(&ptn[..ptn.len() - WILDCARD.len()])
-                } else {
-                    ptn == text
-                }
+        } else if self.options.name_matchers.is_empty() {
+            if eww {
+                text.starts_with(&ptn[..ptn.len() - WILDCARD.len()])
             } else {
-                let mut new_names = HashMap::new();
-                loop {
-                    let mut matched = false;
-                    for (ref ptn_re, ref text_re) in &self.options.name_matchers {
-                        if let Some(ptnm) = ptn_re.find(ptn) {
-                            matched = true;
-                            if ptnm.start() == ptnm.end() {
-                                panic!("Name pattern matched the empty string.");
-                            }
-                            if ptnm.start() > text.len()
-                                || ptn[..ptnm.start()] != text[..ptnm.start()]
-                            {
-                                return false;
-                            }
-                            ptn = &ptn[ptnm.end()..];
-                            text = &text[ptnm.start()..];
-                            if let Some(textm) = text_re.find(text) {
-                                if self.options.distinct_name_matching {
-                                    for (x, y) in names.iter().chain(new_names.iter()) {
-                                        if x != &ptnm.as_str() && y == &textm.as_str() {
-                                            return false;
-                                        }
+                ptn == text
+            }
+        } else {
+            let mut new_names = HashMap::new();
+            loop {
+                let mut matched = false;
+                for (ref ptn_re, ref text_re) in &self.options.name_matchers {
+                    if let Some(ptnm) = ptn_re.find(ptn) {
+                        matched = true;
+                        if ptnm.start() == ptnm.end() {
+                            panic!("Name pattern matched the empty string.");
+                        }
+                        #[allow(clippy::suspicious_operation_groupings)]
+                        if ptnm.start() > text.len() || ptn[..ptnm.start()] != text[..ptnm.start()]
+                        {
+                            return false;
+                        }
+                        ptn = &ptn[ptnm.end()..];
+                        text = &text[ptnm.start()..];
+                        if let Some(textm) = text_re.find(text) {
+                            if self.options.distinct_name_matching {
+                                for (x, y) in names.iter().chain(new_names.iter()) {
+                                    if x != &ptnm.as_str() && y == &textm.as_str() {
+                                        return false;
                                     }
                                 }
-                                if textm.start() == textm.end() {
-                                    panic!("Text pattern matched the empty string.");
+                            }
+                            if textm.start() == textm.end() {
+                                panic!("Text pattern matched the empty string.");
+                            }
+                            match names.entry(ptnm.as_str()) {
+                                Entry::Occupied(e) => {
+                                    if e.get() != &textm.as_str() {
+                                        return false;
+                                    }
                                 }
-                                match names.entry(ptnm.as_str()) {
+                                Entry::Vacant(_) => match new_names.entry(ptnm.as_str()) {
                                     Entry::Occupied(e) => {
                                         if e.get() != &textm.as_str() {
                                             return false;
                                         }
                                     }
-                                    Entry::Vacant(_) => match new_names.entry(ptnm.as_str()) {
-                                        Entry::Occupied(e) => {
-                                            if e.get() != &textm.as_str() {
-                                                return false;
-                                            }
-                                        }
-                                        Entry::Vacant(e) => {
-                                            e.insert(textm.as_str());
-                                        }
-                                    },
-                                }
-                                text = &text[textm.end()..];
-                            } else {
-                                return false;
+                                    Entry::Vacant(e) => {
+                                        e.insert(textm.as_str());
+                                    }
+                                },
                             }
+                            text = &text[textm.end()..];
+                        } else {
+                            return false;
                         }
                     }
-                    if !matched {
-                        break;
-                    }
                 }
-                if (eww && text.starts_with(&ptn[..ptn.len() - WILDCARD.len()])) || ptn == text {
-                    names.extend(new_names);
-                    true
-                } else {
-                    false
+                if !matched {
+                    break;
                 }
+            }
+            if (eww && text.starts_with(&ptn[..ptn.len() - WILDCARD.len()])) || ptn == text {
+                names.extend(new_names);
+                true
+            } else {
+                false
             }
         }
     }
