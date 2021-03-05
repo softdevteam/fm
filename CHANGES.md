@@ -1,3 +1,8 @@
+# fm 0.2.1 (2021-03-05)
+
+* Fix Clippy warnings.
+
+
 # fm 0.2.0 (2020-11-26)
 
 * Multiple name matchers can now be supplied. The API in `FMBuilder` has changed from:
