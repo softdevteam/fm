@@ -1,3 +1,5 @@
+#![allow(clippy::upper_case_acronyms)]
+
 //! `fm` is a simple non-backtracking fuzzy text matcher useful for matching multi-line patterns
 //! and text. At its most basic the wildcard operator (`...` by default) can be used in the
 //! following ways:
