@@ -258,7 +258,7 @@ impl<'a> FMatcher<'a> {
                 (None, None) => return Ok(()),
                 (Some(x), None) => {
                     if x.trim() == WILDCARD {
-                        while let Some(ptnl) = ptn_lines.next() {
+                        for ptnl in ptn_lines {
                             ptn_lines_off += 1;
                             if !self.match_line(&mut names, ptnl, "") {
                                 return Err(FMatchError {
