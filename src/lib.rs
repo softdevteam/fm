@@ -168,7 +168,7 @@ impl<'a> FMBuilder<'a> {
     }
 
     /// If `yes`, blank lines at the start and end of both the pattern and text are ignored for
-    /// matching purposes.
+    /// matching purposes. Defaults to `true`.
     pub fn ignore_surrounding_blank_lines(mut self, yes: bool) -> Self {
         self.options.ignore_surrounding_blank_lines = yes;
         self
