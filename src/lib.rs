@@ -36,19 +36,19 @@
 //! chunk of text must appear at multiple points in the text, but without specifying exactly what
 //! the chunk must contain) you can set options as follows:
 //!
-/// ```rust
-/// use {fm::FMBuilder, regex::Regex};
-///
-/// let ptn_re = Regex::new(r"\$.+?\b").unwrap();
-/// let text_re = Regex::new(r".+?\b").unwrap();
-/// let matcher = FMBuilder::new("$1 $1")
-///                         .unwrap()
-///                         .name_matcher(ptn_re, text_re)
-///                         .build()
-///                         .unwrap();
-/// assert!(matcher.matches("a a").is_ok());
-/// assert!(matcher.matches("a b").is_err());
-/// ```
+//! ```rust
+//! use {fm::FMBuilder, regex::Regex};
+//!
+//! let ptn_re = Regex::new(r"\$.+?\b").unwrap();
+//! let text_re = Regex::new(r".+?\b").unwrap();
+//! let matcher = FMBuilder::new("$1 $1")
+//!                         .unwrap()
+//!                         .name_matcher(ptn_re, text_re)
+//!                         .build()
+//!                         .unwrap();
+//! assert!(matcher.matches("a a").is_ok());
+//! assert!(matcher.matches("a b").is_err());
+//! ```
 use std::{
     collections::hash_map::{Entry, HashMap},
     default::Default,
