@@ -1,7 +1,7 @@
 # fm
 
 `fm` is a simple non-backtracking fuzzy text matcher useful for matching
-multi-line patterns and text. At its most basic the wildcard operator (`...` by
+multi-line patterns and text. At its most basic the wildcard operator `...`
 default) can be used in the following ways:
 
   * If a line consists solely of `...` it means "match zero or more lines of text".
@@ -15,8 +15,7 @@ any other locations, it is matched literally.  Wildcard matching does not
 backtrack, so if a line consists solely of `...` then the next matching line
 anchors the remainder of the search.
 
-The following examples show `fm` in action using its defaults (i.e. `...` as the wildcard
-operator, and leading/trailing whitespace ignored):
+The following examples show `fm` in action using its defaults:
 
 ```rust
 use fm::FMatcher;
