@@ -15,6 +15,15 @@ any other locations, it is matched literally.  Wildcard matching does not
 backtrack, so if a line consists solely of `...` then the next matching line
 anchors the remainder of the search.
 
+Lines can also be prefixed with `!!!` to indicate negative matching. This comes
+with several caveats:
+
+  * Negative wildcard-only matching `!!!...` is nonsensical and is disallowed.
+  * Consecutive negatively matched lines would cause backtracking and are
+    disallowed.
+  * Name matching (see belows) is allowed in negative lines but new name
+    matches on such lines are discarded.
+
 The following examples show `fm` in action using its defaults:
 
 ```rust

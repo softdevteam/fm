@@ -13,6 +13,14 @@
 //! Wildcard matching does not backtrack, so if a line consists solely of `...` then the next
 //! matching line anchors the remainder of the search.
 //!
+//! Lines can also be prefixed with `!!!` to indicate negative matching. This comes with several
+//! caveats:
+//!
+//!   * Negative wildcard-only matching `!!!...` is nonsensical and is disallowed.
+//!   * Consecutive negatively matched lines would cause backtracking and are disallowed.
+//!   * Name matching (see belows) is allowed in negative lines but new name matches on such lines
+//!     are discarded.
+//!
 //! The following examples show `fm` in action using its defaults:
 //!
 //! ```rust
@@ -59,6 +67,7 @@ use regex::Regex;
 
 const ERROR_CONTEXT: usize = 3;
 const WILDCARD: &str = "...";
+const NEGATIVE: &str = "!!!";
 const ERROR_MARKER: &str = ">>";
 
 #[derive(Debug)]
@@ -182,9 +191,31 @@ impl<'a> FMBuilder<'a> {
     }
 
     fn validate(&self) -> Result<(), Box<dyn Error>> {
+        let lines = self.ptn.lines().map(|l| self.trim(l)).collect::<Vec<_>>();
+        if lines.is_empty() {
+            return Ok(());
+        }
+
+        for i in 0..lines.len() - 1 {
+            if lines[i].starts_with(NEGATIVE) && lines[i + 1].starts_with(NEGATIVE) {
+                return Err(Box::<dyn Error>::from(format!(
+                    "Can't have two or more consecutive negative lines starting at line {}.",
+                    i + 1
+                )));
+            }
+        }
+
+        for (i, l) in lines.iter().enumerate() {
+            if l.starts_with(NEGATIVE) && &l[NEGATIVE.len()..] == WILDCARD {
+                return Err(Box::<dyn Error>::from(format!(
+                    "Negative wildcard '!!!...' is nonsensical on line {}.",
+                    i + 1
+                )));
+            }
+        }
+
         for (ref ptn_re, _) in &self.options.name_matchers {
-            for (i, l) in self.ptn.lines().enumerate() {
-                let l = l.trim();
+            for (i, l) in lines.iter().enumerate() {
                 if l.starts_with("...") && ptn_re.is_match(l) {
                     return Err(Box::<dyn Error>::from(format!(
                         "Can't mix name matching with wildcards at start of line {}.",
@@ -194,6 +225,16 @@ impl<'a> FMBuilder<'a> {
             }
         }
         Ok(())
+    }
+
+    fn trim<'b>(&self, mut s: &'b str) -> &'b str {
+        if self.options.ignore_leading_whitespace {
+            s = s.trim_start();
+        }
+        if self.options.ignore_trailing_whitespace {
+            s = s.trim_end();
+        }
+        s
     }
 }
 
@@ -351,17 +392,42 @@ impl<'a> FMatcher<'a> {
             text = text.trim_end();
         }
 
+        if ptn.starts_with(NEGATIVE) {
+            ptn = &ptn[NEGATIVE.len()..];
+            !self.match_ptn(names, ptn, text).0
+        } else {
+            let (matched, new_names) = self.match_ptn(names, ptn, text);
+            if matched {
+                names.extend(new_names);
+            }
+            matched
+        }
+    }
+
+    /// Try matching `ptn` against `text`, returning any new name matches found.
+    fn match_ptn<'b>(
+        &self,
+        names: &HashMap<&'a str, &'b str>,
+        mut ptn: &'a str,
+        mut text: &'b str,
+    ) -> (bool, HashMap<&'a str, &'b str>) {
         let sww = ptn.starts_with(WILDCARD);
         let eww = ptn.ends_with(WILDCARD);
         if sww && eww {
-            text.contains(&ptn[WILDCARD.len()..ptn.len() - WILDCARD.len()])
+            (
+                text.contains(&ptn[WILDCARD.len()..ptn.len() - WILDCARD.len()]),
+                HashMap::new(),
+            )
         } else if sww {
-            text.ends_with(&ptn[WILDCARD.len()..])
+            (text.ends_with(&ptn[WILDCARD.len()..]), HashMap::new())
         } else if self.options.name_matchers.is_empty() {
             if eww {
-                text.starts_with(&ptn[..ptn.len() - WILDCARD.len()])
+                (
+                    text.starts_with(&ptn[..ptn.len() - WILDCARD.len()]),
+                    HashMap::new(),
+                )
             } else {
-                ptn == text
+                (ptn == text, HashMap::new())
             }
         } else {
             let mut new_names = HashMap::new();
@@ -376,7 +442,7 @@ impl<'a> FMatcher<'a> {
                         #[allow(clippy::suspicious_operation_groupings)]
                         if ptnm.start() > text.len() || ptn[..ptnm.start()] != text[..ptnm.start()]
                         {
-                            return false;
+                            return (false, new_names);
                         }
                         ptn = &ptn[ptnm.end()..];
                         text = &text[ptnm.start()..];
@@ -384,23 +450,23 @@ impl<'a> FMatcher<'a> {
                             if self.options.distinct_name_matching {
                                 for (x, y) in names.iter().chain(new_names.iter()) {
                                     if x != &ptnm.as_str() && y == &textm.as_str() {
-                                        return false;
+                                        return (false, new_names);
                                     }
                                 }
                             }
                             if textm.start() == textm.end() {
                                 panic!("Text pattern matched the empty string.");
                             }
-                            match names.entry(ptnm.as_str()) {
-                                Entry::Occupied(e) => {
-                                    if e.get() != &textm.as_str() {
-                                        return false;
+                            match names.get(ptnm.as_str()) {
+                                Some(e) => {
+                                    if e != &textm.as_str() {
+                                        return (false, new_names);
                                     }
                                 }
-                                Entry::Vacant(_) => match new_names.entry(ptnm.as_str()) {
+                                None => match new_names.entry(ptnm.as_str()) {
                                     Entry::Occupied(e) => {
                                         if e.get() != &textm.as_str() {
-                                            return false;
+                                            return (false, new_names);
                                         }
                                     }
                                     Entry::Vacant(e) => {
@@ -410,7 +476,7 @@ impl<'a> FMatcher<'a> {
                             }
                             text = &text[textm.end()..];
                         } else {
-                            return false;
+                            return (false, new_names);
                         }
                     }
                 }
@@ -418,12 +484,10 @@ impl<'a> FMatcher<'a> {
                     break;
                 }
             }
-            if (eww && text.starts_with(&ptn[..ptn.len() - WILDCARD.len()])) || ptn == text {
-                names.extend(new_names);
-                true
-            } else {
-                false
-            }
+            (
+                (eww && text.starts_with(&ptn[..ptn.len() - WILDCARD.len()])) || ptn == text,
+                new_names,
+            )
         }
     }
 }
@@ -585,6 +649,20 @@ mod tests {
     }
 
     #[test]
+    fn negative() {
+        fn helper(ptn: &str, text: &str) -> bool {
+            FMatcher::new(ptn).unwrap().matches(text).is_ok()
+        }
+        assert!(!helper("a\n!!!b", "a\nb"));
+        assert!(helper("a\n!!!b", "a\nc"));
+        assert!(!helper("a\n!!!b...", "a\nb"));
+        assert!(helper("a\n!!!b...", "a\nc"));
+        assert!(!helper("a\n!!!...c", "a\nbc"));
+        assert!(helper("a\n!!!b...c", "a\nbd"));
+        assert!(helper("a\n!!!b...c", "a\nb"));
+    }
+
+    #[test]
     fn name_matcher() {
         let nameptn_re = Regex::new(r"\$.+?\b").unwrap();
         let name_re = Regex::new(r".+?\b").unwrap();
@@ -643,6 +721,60 @@ mod tests {
         assert!(helper("$1\n$1 b c...", "a\na b c"));
         assert!(!helper("$1\n$1 b c...\n$1", "a\na b c"));
         assert!(!helper("$1\n$1 b c...\n$1", "a\na b c\na\nb"));
+    }
+
+    #[test]
+    fn negative_name_matcher() {
+        let nameptn_re = Regex::new(r"\$.+?\b").unwrap();
+        let name_re = Regex::new(r".+?\b").unwrap();
+        let helper = |ptn: &str, text: &str| -> bool {
+            FMBuilder::new(ptn)
+                .unwrap()
+                .name_matcher(nameptn_re.clone(), name_re.clone())
+                .build()
+                .unwrap()
+                .matches(text)
+                .is_ok()
+        };
+        assert!(helper("$1\n!!!$1", "a\nb"));
+        assert!(!helper("$1\n!!!$1", "a\na"));
+        assert!(helper("!!!$1\n$1", "a b\na"));
+        assert!(helper("!!!$1\n$1", "a b\nb"));
+        assert!(!helper("$1\n!!!$1 $1", "a\na a"));
+        assert!(helper("$1\n!!!$1 $1", "a\na b"));
+        assert!(helper("$1\n!!!$1 $1\n$1", "a\na b\na"));
+        assert!(!helper("$1\n!!!$1 $1\n$1", "a\na b\nb"));
+        assert!(helper("!!!$1 1\n$1", "a 2\na"));
+        assert!(helper("!!!$1 1\n$1", "a 2\nb"));
+
+        assert!(helper("!!!a\n...", "b"));
+        assert!(helper("!!!a\n...", "b\nc"));
+        assert!(!helper("!!!a\n...", "a"));
+        assert!(!helper("!!!a\n...", "a\nb"));
+
+        assert!(helper("...\n!!!a", "b"));
+        assert!(!helper("...\n!!!a", "a"));
+        assert!(!helper("...\n!!!a", "b\na"));
+    }
+
+    #[test]
+    fn negative_validation() {
+        assert_eq!(
+            FMBuilder::new("!!!...")
+                .unwrap()
+                .build()
+                .unwrap_err()
+                .to_string(),
+            "Negative wildcard '!!!...' is nonsensical on line 1."
+        );
+        assert_eq!(
+            FMBuilder::new("!!!a\n!!!b")
+                .unwrap()
+                .build()
+                .unwrap_err()
+                .to_string(),
+            "Can't have two or more consecutive negative lines starting at line 1."
+        );
     }
 
     #[test]
