@@ -658,8 +658,7 @@ mod tests {
         assert!(!helper("a\n!!!b...", "a\nb"));
         assert!(helper("a\n!!!b...", "a\nc"));
         assert!(!helper("a\n!!!...c", "a\nbc"));
-        assert!(helper("a\n!!!b...c", "a\nbd"));
-        assert!(helper("a\n!!!b...c", "a\nb"));
+        assert!(!helper("a\n!!!...c...", "a\nbcd"));
     }
 
     #[test]
