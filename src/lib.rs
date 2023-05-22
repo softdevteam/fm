@@ -182,9 +182,21 @@ impl<'a> FMBuilder<'a> {
     }
 
     fn validate(&self) -> Result<(), Box<dyn Error>> {
+        let lines = self.ptn.lines().collect::<Vec<_>>();
+        for i in 0..lines.len() {
+            if i < lines.len() - 1 {
+                if lines[i].trim() == WILDCARD && lines[i + 1].trim() == WILDCARD {
+                    return Err(Box::<dyn Error>::from(format!(
+                        "Can't have two consecutive wildcards lines at lines {} and {}.",
+                        i + 1,
+                        i + 2
+                    )));
+                }
+            }
+        }
+
         for (ref ptn_re, _) in &self.options.name_matchers {
-            for (i, l) in self.ptn.lines().enumerate() {
-                let l = l.trim();
+            for (i, l) in lines.iter().enumerate() {
                 if l.starts_with("...") && ptn_re.is_match(l) {
                     return Err(Box::<dyn Error>::from(format!(
                         "Can't mix name matching with wildcards at start of line {}.",
@@ -781,6 +793,39 @@ mod tests {
             .unwrap()
             .matches("x")
             .unwrap();
+    }
+
+    #[test]
+    fn consecutive_wildcards_disallowed() {
+        match FMatcher::new("...\n...") {
+            Err(e)
+                if e.to_string()
+                    == "Can't have two consecutive wildcards lines at lines 1 and 2." =>
+            {
+                ()
+            }
+            _ => panic!(),
+        }
+
+        match FMatcher::new("...\n...\n...") {
+            Err(e)
+                if e.to_string()
+                    == "Can't have two consecutive wildcards lines at lines 1 and 2." =>
+            {
+                ()
+            }
+            _ => panic!(),
+        }
+
+        match FMatcher::new("a\nb\n...\n...") {
+            Err(e)
+                if e.to_string()
+                    == "Can't have two consecutive wildcards lines at lines 3 and 4." =>
+            {
+                ()
+            }
+            _ => panic!(),
+        }
     }
 
     #[test]
