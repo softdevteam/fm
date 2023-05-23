@@ -1,3 +1,9 @@
+# fm 0.2.2 (2023-05-23)
+
+* `...\n...` is an illegal pattern, but previously caused an error when
+  matching: it is now reported at build time as an invalid pattern.
+
+
 # fm 0.2.1 (2021-03-05)
 
 * Fix Clippy warnings.
