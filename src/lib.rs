@@ -184,14 +184,13 @@ impl<'a> FMBuilder<'a> {
     fn validate(&self) -> Result<(), Box<dyn Error>> {
         let lines = self.ptn.lines().collect::<Vec<_>>();
         for i in 0..lines.len() {
-            if i < lines.len() - 1 {
-                if lines[i].trim() == WILDCARD && lines[i + 1].trim() == WILDCARD {
-                    return Err(Box::<dyn Error>::from(format!(
-                        "Can't have two consecutive wildcards lines at lines {} and {}.",
-                        i + 1,
-                        i + 2
-                    )));
-                }
+            if i < lines.len() - 1 && lines[i].trim() == WILDCARD && lines[i + 1].trim() == WILDCARD
+            {
+                return Err(Box::<dyn Error>::from(format!(
+                    "Can't have two consecutive wildcards lines at lines {} and {}.",
+                    i + 1,
+                    i + 2
+                )));
             }
         }
 
