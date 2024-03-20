@@ -63,6 +63,7 @@ const ERROR_MARKER: &str = ">>";
 
 #[derive(Debug)]
 struct FMOptions {
+    output_formatter: OutputFormatter,
     name_matchers: Vec<(Regex, Regex)>,
     distinct_name_matching: bool,
     ignore_leading_whitespace: bool,
@@ -73,6 +74,7 @@ struct FMOptions {
 impl Default for FMOptions {
     fn default() -> Self {
         FMOptions {
+            output_formatter: OutputFormatter::InputThenSummary,
             name_matchers: Vec::new(),
             distinct_name_matching: false,
             ignore_leading_whitespace: true,
@@ -80,6 +82,46 @@ impl Default for FMOptions {
             ignore_surrounding_blank_lines: true,
         }
     }
+}
+
+/// How should an [FMatchError] format itself? Where:
+///
+///   * `Input` means the raw text passed to fmt.
+///   * `Summary` is the subset of pattern and text where an error was detected.
+///
+/// For example a summary may look as follows (where `...` means "text above/below was elided"):
+///
+/// ```text
+/// Pattern (error at line 5):
+///    ...
+///    |2
+///    |3
+///    |4
+/// >> |5
+///    |6
+///    |7
+///    |8
+///    ...
+///
+/// Text (error at line 5):
+///    ...
+///    |2
+///    |3
+///    |4
+/// >> |6
+///    |7
+///    |8
+///    |9
+///    ...
+/// ```
+#[derive(Copy, Clone, Debug)]
+pub enum OutputFormatter {
+    /// Input text followed by a summary.
+    InputThenSummary,
+    /// Input text only.
+    InputOnly,
+    /// Summary only.
+    SummaryOnly,
 }
 
 /// Build up a `FMatcher` allowing the setting of options.
@@ -110,6 +152,11 @@ impl<'a> FMBuilder<'a> {
             ptn,
             options: FMOptions::default(),
         })
+    }
+
+    pub fn output_formatter(mut self, output_formatter: OutputFormatter) -> Self {
+        self.options.output_formatter = output_formatter;
+        self
     }
 
     /// Add a name matcher `(ptn_re, text_re)`. Name matchers allow you to ensure that different
@@ -257,6 +304,7 @@ impl<'a> FMatcher<'a> {
                         text_lines_off += 1;
                     } else {
                         return Err(FMatchError {
+                            output_formatter: self.options.output_formatter,
                             ptn: self.ptn.to_owned(),
                             text: text.to_owned(),
                             ptn_line_off: ptn_lines_off,
@@ -271,6 +319,7 @@ impl<'a> FMatcher<'a> {
                             ptn_lines_off += 1;
                             if !self.match_line(&mut names, ptnl, "") {
                                 return Err(FMatchError {
+                                    output_formatter: self.options.output_formatter,
                                     ptn: self.ptn.to_owned(),
                                     text: text.to_owned(),
                                     ptn_line_off: ptn_lines_off,
@@ -283,6 +332,7 @@ impl<'a> FMatcher<'a> {
                         match self.skip_blank_lines(&mut ptn_lines, Some(x)) {
                             (Some(_), skipped) => {
                                 return Err(FMatchError {
+                                    output_formatter: self.options.output_formatter,
                                     ptn: self.ptn.to_owned(),
                                     text: text.to_owned(),
                                     ptn_line_off: ptn_lines_off + skipped,
@@ -299,6 +349,7 @@ impl<'a> FMatcher<'a> {
                         return Ok(());
                     }
                     return Err(FMatchError {
+                        output_formatter: self.options.output_formatter,
                         ptn: self.ptn.to_owned(),
                         text: text.to_owned(),
                         ptn_line_off: ptn_lines_off,
@@ -441,8 +492,8 @@ impl<'a> FMatcher<'a> {
 
 /// An error indicating a failed match.
 /// The pattern and text are copied in so that the error isn't tied to their lifetimes.
-#[derive(PartialEq)]
 pub struct FMatchError {
+    output_formatter: OutputFormatter,
     ptn: String,
     text: String,
     ptn_line_off: usize,
@@ -461,53 +512,94 @@ impl FMatchError {
 
 impl fmt::Display for FMatchError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        // Figure out how many characters are required for the line numbers margin.
-        let err_mk_chars = ERROR_MARKER.chars().count() + ' '.len_utf8();
-
-        let display_lines = |f: &mut fmt::Formatter, s: &str, mark_line: usize| -> fmt::Result {
-            let mut i = 1;
-            if mark_line.checked_sub(ERROR_CONTEXT + 2).is_some() {
-                writeln!(f, "{}...", " ".repeat(err_mk_chars))?;
+        match self.output_formatter {
+            OutputFormatter::SummaryOnly => fmt_summary(
+                f,
+                &self.ptn,
+                self.ptn_line_off,
+                &self.text,
+                self.text_line_off,
+            ),
+            OutputFormatter::InputThenSummary => {
+                fmt_raw(f, &self.text)?;
+                writeln!(f, "")?;
+                fmt_summary(
+                    f,
+                    &self.ptn,
+                    self.ptn_line_off,
+                    &self.text,
+                    self.text_line_off,
+                )
             }
-            for line in s.lines() {
-                if let Some(j) = mark_line.checked_sub(ERROR_CONTEXT) {
-                    if i < j {
-                        i += 1;
-                        continue;
-                    }
-                }
-                if mark_line == i {
-                    write!(f, "{} ", ERROR_MARKER)?;
-                } else {
-                    write!(f, "{}", " ".repeat(err_mk_chars))?;
-                }
-                if line.is_empty() {
-                    writeln!(f, "|")?;
-                } else {
-                    writeln!(f, "|{}", line)?;
-                }
-                i += 1;
-                if let Some(j) = mark_line.checked_add(ERROR_CONTEXT) {
-                    if i > j {
-                        break;
-                    }
+            OutputFormatter::InputOnly => fmt_raw(f, &self.text),
+        }
+    }
+}
+
+fn fmt_raw(f: &mut fmt::Formatter, text: &str) -> fmt::Result {
+    let err_mk_chars = ERROR_MARKER.chars().count() + ' '.len_utf8();
+    let lhs = &format!("\n{}|", " ".repeat(err_mk_chars));
+    writeln!(
+        f,
+        "Raw text:{}{}",
+        lhs,
+        text.split("\n").collect::<Vec<_>>().join(lhs)
+    )
+}
+
+fn fmt_summary(
+    f: &mut fmt::Formatter,
+    ptn: &str,
+    ptn_line_off: usize,
+    text: &str,
+    text_line_off: usize,
+) -> fmt::Result {
+    // Figure out how many characters are required for the LHS margin.
+    let err_mk_chars = ERROR_MARKER.chars().count() + ' '.len_utf8();
+
+    let display_lines = |f: &mut fmt::Formatter, s: &str, mark_line: usize| -> fmt::Result {
+        let mut i = 1;
+        if mark_line.checked_sub(ERROR_CONTEXT + 2).is_some() {
+            writeln!(f, "{}...", " ".repeat(err_mk_chars))?;
+        }
+        for line in s.lines() {
+            if let Some(j) = mark_line.checked_sub(ERROR_CONTEXT) {
+                if i < j {
+                    i += 1;
+                    continue;
                 }
             }
             if mark_line == i {
-                writeln!(f, "{}", ERROR_MARKER)?;
-            } else if let Some(j) = mark_line.checked_add(ERROR_CONTEXT) {
+                write!(f, "{} ", ERROR_MARKER)?;
+            } else {
+                write!(f, "{}", " ".repeat(err_mk_chars))?;
+            }
+            if line.is_empty() {
+                writeln!(f, "|")?;
+            } else {
+                writeln!(f, "|{}", line)?;
+            }
+            i += 1;
+            if let Some(j) = mark_line.checked_add(ERROR_CONTEXT) {
                 if i > j {
-                    writeln!(f, "{}...", " ".repeat(err_mk_chars))?;
+                    break;
                 }
             }
-            Ok(())
-        };
+        }
+        if mark_line == i {
+            writeln!(f, "{}", ERROR_MARKER)?;
+        } else if let Some(j) = mark_line.checked_add(ERROR_CONTEXT) {
+            if i > j {
+                writeln!(f, "{}...", " ".repeat(err_mk_chars))?;
+            }
+        }
+        Ok(())
+    };
 
-        writeln!(f, "Pattern (error at line {}):", self.ptn_line_off)?;
-        display_lines(f, &self.ptn, self.ptn_line_off)?;
-        writeln!(f, "\nText (error at line {}):", self.text_line_off)?;
-        display_lines(f, &self.text, self.text_line_off)
-    }
+    writeln!(f, "Pattern (error at line {}):", ptn_line_off)?;
+    display_lines(f, &ptn, ptn_line_off)?;
+    writeln!(f, "\nText (error at line {}):", text_line_off)?;
+    display_lines(f, &text, text_line_off)
 }
 
 /// A short error message. We don't reuse the longer message from `Display` as a Rust panic
@@ -864,9 +956,10 @@ mod tests {
     fn error_display() {
         let ptn_re = Regex::new("\\$.+?\\b").unwrap();
         let text_re = Regex::new(".+?\\b").unwrap();
-        let helper = |ptn: &str, text: &str| -> String {
+        let helper = |output_formatter: OutputFormatter, ptn: &str, text: &str| -> String {
             let err = FMBuilder::new(ptn)
                 .unwrap()
+                .output_formatter(output_formatter)
                 .name_matcher(ptn_re.clone(), text_re.clone())
                 .build()
                 .unwrap()
@@ -876,7 +969,11 @@ mod tests {
         };
 
         assert_eq!(
-            helper("a\nb\nc\nd\n", "a\nb\nc\nz\nd\n"),
+            helper(
+                OutputFormatter::SummaryOnly,
+                "a\nb\nc\nd\n",
+                "a\nb\nc\nz\nd\n"
+            ),
             "Pattern (error at line 4):
    |a
    |b
@@ -893,7 +990,7 @@ Text (error at line 4):
         );
 
         assert_eq!(
-            helper("a\n", "a\n\nb"),
+            helper(OutputFormatter::SummaryOnly, "a\n", "a\n\nb"),
             "Pattern (error at line 2):
    |a
 >>
@@ -905,39 +1002,90 @@ Text (error at line 3):
 "
         );
 
-        let mut ptn = String::new();
-        let mut text = String::new();
-        for i in 1..1000 {
-            ptn.push_str(&format!("a{}\n", i));
-            text.push_str(&format!("a{}\n", i));
-        }
-        for i in 1000..1100 {
-            ptn.push_str(&format!("a{}\n", i));
-            text.push_str(&format!("a{}\n", i + 1));
-        }
+        let ptn = (1..10)
+            .map(|x| x.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let text = (1..11)
+            .filter(|x| *x != 5)
+            .map(|x| x.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
         assert_eq!(
-            helper(&ptn, &text),
-            "Pattern (error at line 1000):
+            helper(OutputFormatter::SummaryOnly, &ptn, &text),
+            "Pattern (error at line 5):
    ...
-   |a997
-   |a998
-   |a999
->> |a1000
-   |a1001
-   |a1002
-   |a1003
+   |2
+   |3
+   |4
+>> |5
+   |6
+   |7
+   |8
    ...
 
-Text (error at line 1000):
+Text (error at line 5):
    ...
-   |a997
-   |a998
-   |a999
->> |a1001
-   |a1002
-   |a1003
-   |a1004
+   |2
+   |3
+   |4
+>> |6
+   |7
+   |8
+   |9
    ...
+"
+        );
+
+        assert_eq!(
+            helper(OutputFormatter::InputThenSummary, &ptn, &text),
+            "Raw text:
+   |1
+   |2
+   |3
+   |4
+   |6
+   |7
+   |8
+   |9
+   |10
+
+Pattern (error at line 5):
+   ...
+   |2
+   |3
+   |4
+>> |5
+   |6
+   |7
+   |8
+   ...
+
+Text (error at line 5):
+   ...
+   |2
+   |3
+   |4
+>> |6
+   |7
+   |8
+   |9
+   ...
+"
+        );
+
+        assert_eq!(
+            helper(OutputFormatter::InputOnly, &ptn, &text),
+            "Raw text:
+   |1
+   |2
+   |3
+   |4
+   |6
+   |7
+   |8
+   |9
+   |10
 "
         );
     }
