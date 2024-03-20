@@ -1,3 +1,12 @@
+# fm 0.3.0 (2024-03-20)
+
+* Add `OutputFormatter`s. The default output formatting has now changed from a
+  summary of the pattern and text to: the raw text followed by the
+  (same-as-before) summary.
+
+* `FMatchError` no longer implements `PartialEq`.
+
+
 # fm 0.2.2 (2023-05-23)
 
 * `...\n...` is an illegal pattern, but previously caused an error when
