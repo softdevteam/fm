@@ -1,7 +1,8 @@
 #![allow(clippy::upper_case_acronyms)]
 
-//! `fm` is a simple non-backtracking fuzzy text matcher useful for matching multi-line patterns
-//! and text. At its most basic the wildcard operator `...` can be used in the following ways:
+//! `fm` is a simple fuzzy text matcher useful for matching multi-line patterns.
+//!
+//! Its core feature is the wildcard operator `...`, which can be used in the following ways:
 //!
 //!   * If a line consists solely of `...` it means "match zero or more lines of text".
 //!   * If a line starts with `...`, the search is not anchored to the start of the line.
@@ -10,8 +11,13 @@
 //! Note that `...` can appear both at the start and end of a line and if a line consists of
 //! `......` (i.e. starts and ends with the wildcard with nothing inbetween), it will match exactly
 //! one line. If the wildcard operator appears in any other locations, it is matched literally.
-//! Wildcard matching does not backtrack, so if a line consists solely of `...` then the next
-//! matching line anchors the remainder of the search.
+//!
+//! A line consisting solely of `...` searches until the next line/group in the pattern matches,
+//! which then anchors the remainder of the search: in other words, searching never backtracks
+//! beyond a line consisting solely of `...`. Each individual line constitutes a group *unless* the
+//! `(((` ... `)))` markers (where each marker must be on its own line) group together multiple
+//! lines into a single group. Within a group, line(s) can start/end with a wildcard but cannot
+//! solely consist of a wildcard.
 //!
 //! The following examples show `fm` in action using its defaults:
 //!
@@ -59,6 +65,8 @@ use regex::Regex;
 
 const ERROR_CONTEXT: usize = 3;
 const WILDCARD: &str = "...";
+const OPEN_GROUP: &str = "(((";
+const CLOSE_GROUP: &str = ")))";
 const ERROR_MARKER: &str = ">>";
 
 #[derive(Debug)]
@@ -95,7 +103,7 @@ impl Default for FMOptions {
 /// Pattern (error at line 5):
 ///    ...
 ///    |2
-///    |3
+///    |
 ///    |4
 /// >> |5
 ///    |6
@@ -241,6 +249,53 @@ impl<'a> FMBuilder<'a> {
             }
         }
 
+        let mut in_group = None;
+        for (i, l) in lines.iter().enumerate() {
+            match l.trim() {
+                OPEN_GROUP => {
+                    if i == 0 || lines[i - 1].trim() != WILDCARD {
+                        return Err(Box::<dyn Error>::from(format!(
+                            "Open group on line {} must be preceded by a wildcard line",
+                            i + 1
+                        )));
+                    }
+                    // Nested OPEN_GROUPs are caught by the "can't put a wildcard line in a group"
+                    // error.
+                    assert!(in_group.is_none());
+                    in_group = Some(i);
+                }
+                CLOSE_GROUP => {
+                    if in_group.is_none() {
+                        return Err(Box::<dyn Error>::from(format!(
+                            "Close group on line {} has no corresponding open group",
+                            i + 1
+                        )));
+                    } else if lines[i - 1].trim() == OPEN_GROUP {
+                        return Err(Box::<dyn Error>::from(format!(
+                            "Empty group starting at line {}",
+                            i
+                        )));
+                    }
+                    in_group = None;
+                }
+                WILDCARD => {
+                    if in_group.is_some() {
+                        return Err(Box::<dyn Error>::from(format!(
+                            "Wildcard lines not allowed inside groups on line {}",
+                            i + 1
+                        )));
+                    }
+                }
+                _ => (),
+            }
+        }
+        if let Some(i) = in_group {
+            return Err(Box::<dyn Error>::from(format!(
+                "Open group on line {} has no matching close group",
+                i + 1
+            )));
+        }
+
         for (ref ptn_re, _) in &self.options.name_matchers {
             for (i, l) in lines.iter().enumerate() {
                 if l.starts_with("...") && ptn_re.is_match(l) {
@@ -263,8 +318,8 @@ pub struct FMatcher<'a> {
 }
 
 impl<'a> FMatcher<'a> {
-    /// A convenience method that automatically builds a pattern for you using `FMBuilder`'s
-    /// default options.
+    /// A convenience method that automatically builds a pattern using `FMBuilder`'s default
+    /// options.
     pub fn new(ptn: &'a str) -> Result<FMatcher, Box<dyn Error>> {
         FMBuilder::new(ptn)?.build()
     }
@@ -285,6 +340,65 @@ impl<'a> FMatcher<'a> {
                         ptnl = ptn_lines.next();
                         ptn_lines_off += 1;
                         match ptnl {
+                            Some(OPEN_GROUP) => {
+                                let ptn_lines_off_orig = ptn_lines_off;
+                                let text_lines_off_orig = text_lines_off;
+                                dbg!(ptn_lines_off, text_lines_off);
+                                // We now have to perform (bounded) backtracking
+                                ptnl = ptn_lines.next();
+                                ptn_lines_off += 1;
+                                let mut ptn_lines_sub = ptn_lines.clone();
+                                let mut ptnl_sub = ptnl;
+                                let mut ptn_lines_off_sub = ptn_lines_off;
+                                let mut text_lines_sub = text_lines.clone();
+                                let mut text_lines_off_sub = text_lines_off;
+                                let mut textl_sub = textl;
+                                let mut names_sub = names.clone();
+                                loop {
+                                    match (ptnl_sub, textl_sub) {
+                                        (Some(CLOSE_GROUP), _) => {
+                                            // We've matched everything successfully
+                                            ptn_lines = ptn_lines_sub;
+                                            ptnl = ptn_lines.next();
+                                            ptn_lines_off = ptn_lines_off_sub;
+                                            text_lines = text_lines_sub;
+                                            textl = textl_sub;
+                                            text_lines_off = text_lines_off_sub;
+                                            names = names_sub;
+                                            break;
+                                        }
+                                        (Some(_), None) => {
+                                            return Err(FMatchError {
+                                                output_formatter: self.options.output_formatter,
+                                                ptn: self.ptn.to_owned(),
+                                                text: text.to_owned(),
+                                                ptn_line_off: ptn_lines_off_orig,
+                                                text_line_off: text_lines_off_orig,
+                                            });
+                                        }
+                                        (Some(x), Some(y)) => {
+                                            if self.match_line(&mut names_sub, x, y) {
+                                                ptnl_sub = ptn_lines_sub.next();
+                                                ptn_lines_off_sub += 1;
+                                                textl_sub = text_lines_sub.next();
+                                                text_lines_off_sub += 1;
+                                            } else {
+                                                // We failed to match, so we need to reset the
+                                                // pattern, but advance the text.
+                                                ptn_lines_sub = ptn_lines.clone();
+                                                ptnl_sub = ptnl;
+                                                ptn_lines_off_sub += 1;
+                                                textl_sub = text_lines.next();
+                                                text_lines_sub = text_lines.clone();
+                                                text_lines_off += 1;
+                                                text_lines_off_sub = text_lines_off;
+                                                names_sub = names.clone();
+                                            }
+                                        }
+                                        (None, _) => unreachable!(),
+                                    }
+                                }
+                            }
                             Some(x) => {
                                 while let Some(y) = textl {
                                     text_lines_off += 1;
@@ -664,6 +778,22 @@ mod tests {
     }
 
     #[test]
+    fn groupings() {
+        fn helper(ptn: &str, text: &str) -> bool {
+            FMatcher::new(ptn).unwrap().matches(text).is_ok()
+        }
+        assert!(helper("a\n...\n(((\nc\n)))", "a\nb\nc"));
+        assert!(helper("a\n...\n(((\nc\n)))", "a\nc"));
+        assert!(helper("a\n...\n(((\nc\nd\n)))", "a\nc\nd"));
+        assert!(helper("a\n...\n(((\nc\nd\n)))", "a\nb\nc\nd"));
+        assert!(!helper("a\n...\n(((\nc\nd\n)))\ne", "a\nb\nc\nd"));
+        assert!(!helper("a\n...\n(((\nc\nd\n)))", "a\nb\nc\ne"));
+        assert!(!helper("a\n...\n(((\nc\nd\n)))", "a\nc\ne\nc\ne"));
+        assert!(helper("a\n...\n(((\nc\nd\n)))", "a\nc\ne\nc\nd"));
+        assert!(helper("a\n...\n(((\nc\nd\n)))\ne", "a\nc\ne\nc\nd\ne"));
+    }
+
+    #[test]
     fn dont_ignore_surrounding_blank_lines() {
         fn helper(ptn: &str, text: &str) -> bool {
             FMBuilder::new(ptn)
@@ -746,6 +876,13 @@ mod tests {
         assert!(helper("$1\n$1 b c...", "a\na b c"));
         assert!(!helper("$1\n$1 b c...\n$1", "a\na b c"));
         assert!(!helper("$1\n$1 b c...\n$1", "a\na b c\na\nb"));
+
+        assert!(helper("...\n$1, $1\n...", "a, a"));
+        assert!(helper("...\n(((\n$1\n$1\n)))\n...", "a\na"));
+        assert!(helper("...\n(((\n$1\n$1\n)))\n...", "a\nb\nb"));
+        assert!(helper("...\n(((\n$1\n$1\n)))\n...", "a\nb\na\na"));
+        assert!(helper("...\n(((\n$1\n$1\n)))\n...", "a\nb\na\nc\nc"));
+        assert!(!helper("...\n(((\n$1\n$1\n)))\n...", "a\nb\na\nb"));
     }
 
     #[test]
@@ -856,6 +993,10 @@ mod tests {
         assert_eq!(helper("...\nb\nc\nd\n", "a\nb\nc\n0\ne"), (4, 4));
         assert_eq!(helper("...\nc\nd\n", "a\nb\nc\n0\ne"), (3, 4));
         assert_eq!(helper("...\nd\n", "a\nb\nc\n0\ne"), (2, 5));
+
+        assert_eq!(helper("a\n...\n(((\nc\nd\n)))\ne", "a\nb\nc\nd"), (7, 5));
+        assert_eq!(helper("a\n...\n(((\nc\nd\n)))", "a\nb\nc\ne"), (3, 2));
+        assert_eq!(helper("a\n...\n(((\nc\nd\n)))", "a\nc\ne\nc\ne"), (3, 2));
     }
 
     #[test]
@@ -916,6 +1057,35 @@ mod tests {
                 ()
             }
             _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn invalid_groupings() {
+        match FMatcher::new("(((") {
+            Err(e)
+                if e.to_string() == "Open group on line 1 must be preceded by a wildcard line" =>
+            {
+                ()
+            }
+            x => panic!("{x:?}"),
+        }
+
+        match FMatcher::new("...\n(((") {
+            Err(e) if e.to_string() == "Open group on line 2 has no matching close group" => (),
+            x => panic!("{x:?}"),
+        }
+
+        match FMatcher::new("...\n(((\na\n)))\n)))") {
+            Err(e) if e.to_string() == "Close group on line 5 has no corresponding open group" => {
+                ()
+            }
+            x => panic!("{x:?}"),
+        }
+
+        match FMatcher::new("...\n(((\n)))") {
+            Err(e) if e.to_string() == "Empty group starting at line 2" => (),
+            x => panic!("{x:?}"),
         }
     }
 

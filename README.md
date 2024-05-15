@@ -1,19 +1,29 @@
 # fm
 
-`fm` is a simple non-backtracking fuzzy text matcher useful for matching
-multi-line patterns and text. At its most basic the wildcard operator `...`
-default) can be used in the following ways:
+`fm` is a simple fuzzy text matcher useful for matching multi-line patterns.
 
-  * If a line consists solely of `...` it means "match zero or more lines of text".
-  * If a line starts with `...`, the search is not anchored to the start of the line.
-  * If a line ends with `...`, the search is not anchored to the end of the line.
+Its core feature is the wildcard operator `...`, which can be used in the
+following ways:
+
+  * If a line consists solely of `...` it means "match zero or more lines of
+    text".
+  * If a line starts with `...`, the search is not anchored to the start of the
+    line.
+  * If a line ends with `...`, the search is not anchored to the end of the
+    line.
 
 Note that `...` can appear both at the start and end of a line and if a line
 consists of `......` (i.e. starts and ends with the wildcard with nothing
 inbetween), it will match exactly one line. If the wildcard operator appears in
-any other locations, it is matched literally.  Wildcard matching does not
-backtrack, so if a line consists solely of `...` then the next matching line
-anchors the remainder of the search.
+any other locations, it is matched literally.
+
+A line consisting solely of `...` searches until the next line/group in the
+pattern matches, which then anchors the remainder of the search: in other
+words, searching never backtracks beyond a line consisting solely of `...`.
+Each individual line constitutes a group *unless* the `(((` ... `)))` markers
+(where each marker must be on its own line) group together multiple lines into
+a single group. Within a group, line(s) can start/end with a wildcard but
+cannot solely consist of a wildcard.
 
 The following examples show `fm` in action using its defaults:
 
