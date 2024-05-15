@@ -343,7 +343,6 @@ impl<'a> FMatcher<'a> {
                             Some(OPEN_GROUP) => {
                                 let ptn_lines_off_orig = ptn_lines_off;
                                 let text_lines_off_orig = text_lines_off;
-                                dbg!(ptn_lines_off, text_lines_off);
                                 // We now have to perform (bounded) backtracking
                                 ptnl = ptn_lines.next();
                                 ptn_lines_off += 1;
