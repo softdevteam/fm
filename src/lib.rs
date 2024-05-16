@@ -266,8 +266,7 @@ pub struct FMatcher<'a> {
 }
 
 impl<'a> FMatcher<'a> {
-    /// A convenience method that automatically builds a pattern for you using `FMBuilder`'s
-    /// default options.
+    /// A convenience method that automatically builds a pattern using `FMBuilder` defaults.
     pub fn new(ptn: &'a str) -> Result<FMatcher, Box<dyn Error>> {
         FMBuilder::new(ptn)?.build()
     }
