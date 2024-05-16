@@ -1,16 +1,16 @@
 #![allow(clippy::upper_case_acronyms)]
 
 //! `fm` is a simple non-backtracking fuzzy text matcher useful for matching multi-line patterns
-//! and text. At its most basic the wildcard operator `...` can be used in the following ways:
+//! and text. At its most basic, wildcard operators can be used in the following ways:
 //!
-//!   * If a line consists solely of `...` it means "match zero or more lines of text".
+//!   * If a line consists solely of `..?` it means "match zero or more lines of text".
 //!   * If a line starts with `...`, the search is not anchored to the start of the line.
 //!   * If a line ends with `...`, the search is not anchored to the end of the line.
 //!
 //! Note that `...` can appear both at the start and end of a line and if a line consists of
 //! `......` (i.e. starts and ends with the wildcard with nothing inbetween), it will match exactly
 //! one line. If the wildcard operator appears in any other locations, it is matched literally.
-//! Wildcard matching does not backtrack, so if a line consists solely of `...` then the next
+//! Wildcard matching does not backtrack, so if a line consists solely of `..?` then the next
 //! matching line anchors the remainder of the search.
 //!
 //! The following examples show `fm` in action using its defaults:
@@ -21,8 +21,8 @@
 //! assert!(FMatcher::new("a").unwrap().matches("a").is_ok());
 //! assert!(FMatcher::new(" a ").unwrap().matches("a").is_ok());
 //! assert!(FMatcher::new("a").unwrap().matches("b").is_err());
-//! assert!(FMatcher::new("a\n...\nb").unwrap().matches("a\na\nb").is_ok());
-//! assert!(FMatcher::new("a\n...\nb").unwrap().matches("a\na\nb\nb").is_err());
+//! assert!(FMatcher::new("a\n..?\nb").unwrap().matches("a\na\nb").is_ok());
+//! assert!(FMatcher::new("a\n..?\nb").unwrap().matches("a\na\nb\nb").is_err());
 //! ```
 //!
 //! When a match fails, the matcher returns an error indicating the line number at which the match
@@ -58,7 +58,7 @@ use std::{
 use regex::Regex;
 
 const ERROR_CONTEXT: usize = 3;
-const INTERLINE_WILDCARD: &str = "...";
+const LINE_ANCHOR_WILDCARD: &str = "..?";
 const INTRALINE_WILDCARD: &str = "...";
 const ERROR_MARKER: &str = ">>";
 
@@ -231,10 +231,20 @@ impl<'a> FMBuilder<'a> {
 
     fn validate(&self) -> Result<(), Box<dyn Error>> {
         let lines = self.ptn.lines().collect::<Vec<_>>();
+
+        for (i, l) in lines.iter().enumerate() {
+            if l.trim() == "..." {
+                return Err(Box::<dyn Error>::from(format!(
+                    "'...' interline syntax on line {} is deprecated: use '..?' instead",
+                    i + 1
+                )));
+            }
+        }
+
         for i in 0..lines.len() {
             if i < lines.len() - 1
-                && lines[i].trim() == INTERLINE_WILDCARD
-                && lines[i + 1].trim() == INTERLINE_WILDCARD
+                && lines[i].trim() == LINE_ANCHOR_WILDCARD
+                && lines[i + 1].trim() == LINE_ANCHOR_WILDCARD
             {
                 return Err(Box::<dyn Error>::from(format!(
                     "Can't have two consecutive wildcards lines at lines {} and {}.",
@@ -283,7 +293,7 @@ impl<'a> FMatcher<'a> {
         loop {
             match (ptnl, textl) {
                 (Some(x), Some(y)) => {
-                    if x.trim() == INTERLINE_WILDCARD {
+                    if x.trim() == LINE_ANCHOR_WILDCARD {
                         ptnl = ptn_lines.next();
                         ptn_lines_off += 1;
                         match ptnl {
@@ -316,7 +326,7 @@ impl<'a> FMatcher<'a> {
                 }
                 (None, None) => return Ok(()),
                 (Some(x), None) => {
-                    if x.trim() == INTERLINE_WILDCARD {
+                    if x.trim() == LINE_ANCHOR_WILDCARD {
                         for ptnl in ptn_lines {
                             ptn_lines_off += 1;
                             if !self.match_line(&mut names, ptnl, "") {
@@ -634,19 +644,19 @@ mod tests {
         assert!(helper("", "\n"));
         assert!(helper("a", "a"));
         assert!(!helper("a", "ab"));
-        assert!(helper("...", ""));
-        assert!(helper("...", "a"));
-        assert!(helper("...", "a\nb"));
-        assert!(helper("...\na", "a"));
-        assert!(helper("...\na\n...", "a"));
-        assert!(helper("a\n...", "a"));
-        assert!(helper("a\n...\nd", "a\nd"));
-        assert!(helper("a\n...\nd", "a\nb\nc\nd"));
-        assert!(!helper("a\n...\nd", "a\nb\nc"));
-        assert!(helper("a\n...\nc\n...\ne", "a\nb\nc\nd\ne"));
-        assert!(helper("a\n...\n...b", "a\nb"));
-        assert!(helper("a\n...\nb...", "a\nb"));
-        assert!(helper("a\n...\nb...", "a\nbc"));
+        assert!(helper("..?", ""));
+        assert!(helper("..?", "a"));
+        assert!(helper("..?", "a\nb"));
+        assert!(helper("..?\na", "a"));
+        assert!(helper("..?\na\n..?", "a"));
+        assert!(helper("a\n..?", "a"));
+        assert!(helper("a\n..?\nd", "a\nd"));
+        assert!(helper("a\n..?\nd", "a\nb\nc\nd"));
+        assert!(!helper("a\n..?\nd", "a\nb\nc"));
+        assert!(helper("a\n..?\nc\n..?\ne", "a\nb\nc\nd\ne"));
+        assert!(helper("a\n..?\n...b", "a\nb"));
+        assert!(helper("a\n..?\nb...", "a\nb"));
+        assert!(helper("a\n..?\nb...", "a\nbc"));
         assert!(helper("a\nb...", "a\nbc"));
         assert!(!helper("a\nb...", "a\nb\nc"));
         assert!(helper("a\n...b...", "a\nb"));
@@ -656,7 +666,7 @@ mod tests {
         assert!(!helper("a\n...b...", "a\nxb\nc"));
         assert!(!helper("a", "a\nb"));
         assert!(!helper("a\nb", "a"));
-        assert!(!helper("a\n...\nb", "a"));
+        assert!(!helper("a\n..?\nb", "a"));
         assert!(helper("a\n", "a\n"));
         assert!(helper("a\n", "a"));
         assert!(helper("a", "a\n"));
@@ -707,22 +717,22 @@ mod tests {
         assert!(helper("", ""));
         assert!(helper("a", "a"));
         assert!(!helper("a", "ab"));
-        assert!(helper("...", ""));
-        assert!(helper("...", "a"));
+        assert!(helper("..?", ""));
+        assert!(helper("..?", "a"));
         assert!(helper("......", "a"));
         assert!(!helper("......", ""));
-        assert!(helper("...", "a\nb"));
+        assert!(helper("..?", "a\nb"));
         assert!(!helper("......", "a\nb"));
-        assert!(helper("...\na", "a"));
-        assert!(helper("...\na\n...", "a"));
-        assert!(helper("a\n...", "a"));
-        assert!(helper("a\n...\nd", "a\nd"));
-        assert!(helper("a\n...\nd", "a\nb\nc\nd"));
-        assert!(!helper("a\n...\nd", "a\nb\nc"));
-        assert!(helper("a\n...\nc\n...\ne", "a\nb\nc\nd\ne"));
-        assert!(helper("a\n...\n...b", "a\nb"));
-        assert!(helper("a\n...\nb...", "a\nb"));
-        assert!(helper("a\n...\nb...", "a\nbc"));
+        assert!(helper("..?\na", "a"));
+        assert!(helper("..?\na\n..?", "a"));
+        assert!(helper("a\n..?", "a"));
+        assert!(helper("a\n..?\nd", "a\nd"));
+        assert!(helper("a\n..?\nd", "a\nb\nc\nd"));
+        assert!(!helper("a\n..?\nd", "a\nb\nc"));
+        assert!(helper("a\n..?\nc\n..?\ne", "a\nb\nc\nd\ne"));
+        assert!(helper("a\n..?\n...b", "a\nb"));
+        assert!(helper("a\n..?\nb...", "a\nb"));
+        assert!(helper("a\n..?\nb...", "a\nbc"));
         assert!(helper("a\nb...", "a\nbc"));
         assert!(!helper("a\nb...", "a\nb\nc"));
         assert!(helper("a\n...b...", "a\nb"));
@@ -741,7 +751,7 @@ mod tests {
         assert!(helper("$1, $1, a", "a, a, a"));
         assert!(!helper("$1, $1, a", "a, a, b"));
         assert!(!helper("$1, $1, a", "a, b, a"));
-        assert!(helper("$1 $2\n...\n$3 $2", "a X\nb Y\nc X"));
+        assert!(helper("$1 $2\n..?\n$3 $2", "a X\nb Y\nc X"));
         assert!(!helper("ab$a", "a"));
         assert!(helper("$1\n$1...", "a\na b c"));
         assert!(!helper("$1\n$1...", "a\nb b c"));
@@ -778,7 +788,7 @@ mod tests {
         assert!(helper("$1, $1, a", "a, a, a"));
         assert!(!helper("$1, $1, a", "a, a, b"));
         assert!(!helper("$1, $1, a", "a, b, a"));
-        assert!(helper("$1 $2\n...\n$3 $2", "a X\nb Y\nc X"));
+        assert!(helper("$1 $2\n..?\n$3 $2", "a X\nb Y\nc X"));
         assert!(!helper("ab$a", "a"));
         assert!(helper("$1\n$1...", "a\na b c"));
         assert!(!helper("$1\n$1...", "a\nb b c"));
@@ -798,7 +808,7 @@ mod tests {
         assert!(helper("&1, &1, a", "a, a, a"));
         assert!(!helper("&1, &1, a", "a, a, b"));
         assert!(!helper("&1, &1, a", "a, b, a"));
-        assert!(helper("&1 &2\n...\n&3 &2", "a X\nb Y\nc X"));
+        assert!(helper("&1 &2\n..?\n&3 &2", "a X\nb Y\nc X"));
         assert!(!helper("ab&a", "a"));
         assert!(helper("&1\n&1...", "a\na b c"));
         assert!(!helper("&1\n&1...", "a\nb b c"));
@@ -813,7 +823,7 @@ mod tests {
         assert!(helper("$1 &1 $1", "a b a"));
         assert!(helper("$1 &1 &1", "a b b"));
         assert!(!helper("$1 &1 &1", "a b a"));
-        assert!(helper("$1 &2\n...\n$3 &2", "a X\nb Y\nc X"));
+        assert!(helper("$1 &2\n..?\n$3 &2", "a X\nb Y\nc X"));
         assert!(helper("$1 &1\n$1 &1...", "a b\na b c d"));
         assert!(helper("$1 &1\n$1 &1...", "a b\na b"));
         assert!(!helper("$1 &1\n$1 &1...", "a b\na a c d"));
@@ -836,7 +846,7 @@ mod tests {
             (err.ptn_line_off(), err.text_line_off())
         };
 
-        assert_eq!(helper("a\n...\nd", "a\nb\nc"), (3, 3));
+        assert_eq!(helper("a\n..?\nd", "a\nb\nc"), (3, 3));
         assert_eq!(helper("a\nb...", "a\nb\nc"), (3, 3));
         assert_eq!(helper("a\n...b...", "a\nxb\nc"), (3, 3));
 
@@ -857,9 +867,9 @@ mod tests {
         assert_eq!(helper("$1\n$1\na", "a\na\nb"), (3, 3));
         assert_eq!(helper("$1\n$1\na", "a\nb\na"), (2, 2));
 
-        assert_eq!(helper("...\nb\nc\nd\n", "a\nb\nc\n0\ne"), (4, 4));
-        assert_eq!(helper("...\nc\nd\n", "a\nb\nc\n0\ne"), (3, 4));
-        assert_eq!(helper("...\nd\n", "a\nb\nc\n0\ne"), (2, 5));
+        assert_eq!(helper("..?\nb\nc\nd\n", "a\nb\nc\n0\ne"), (4, 4));
+        assert_eq!(helper("..?\nc\nd\n", "a\nb\nc\n0\ne"), (3, 4));
+        assert_eq!(helper("..?\nd\n", "a\nb\nc\n0\ne"), (2, 5));
     }
 
     #[test]
@@ -892,7 +902,7 @@ mod tests {
 
     #[test]
     fn consecutive_wildcards_disallowed() {
-        match FMatcher::new("...\n...") {
+        match FMatcher::new("..?\n..?") {
             Err(e)
                 if e.to_string()
                     == "Can't have two consecutive wildcards lines at lines 1 and 2." =>
@@ -902,7 +912,7 @@ mod tests {
             _ => panic!(),
         }
 
-        match FMatcher::new("...\n...\n...") {
+        match FMatcher::new("..?\n..?\n..?") {
             Err(e)
                 if e.to_string()
                     == "Can't have two consecutive wildcards lines at lines 1 and 2." =>
@@ -912,7 +922,7 @@ mod tests {
             _ => panic!(),
         }
 
-        match FMatcher::new("a\nb\n...\n...") {
+        match FMatcher::new("a\nb\n..?\n..?") {
             Err(e)
                 if e.to_string()
                     == "Can't have two consecutive wildcards lines at lines 3 and 4." =>
@@ -920,6 +930,19 @@ mod tests {
                 ()
             }
             _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn syntax_deprecation() {
+        match FMatcher::new("...") {
+            Err(e)
+                if e.to_string()
+                    == "'...' interline syntax on line 1 is deprecated: use '..?' instead" =>
+            {
+                ()
+            }
+            x => panic!("{x:?}"),
         }
     }
 
