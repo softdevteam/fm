@@ -1,21 +1,111 @@
 # fm
 
-`fm` is a simple non-backtracking fuzzy text matcher useful for matching
-multi-line patterns and text. At its most basic, wildcard operators can be used
-in the following ways:
+`fm` is a simple limited backtracking fuzzy text matcher useful for matching
+multi-line *patterns* and *literal* text. Wildcard operators can be used to
+match parts of a line and to skip multiple lines of text. For example this
+*pattern*:
 
-  * If a line consists solely of `..?` it means "match zero or more lines of text".
-  * If a line starts with `...`, the search is not anchored to the start of the line.
-  * If a line ends with `...`, the search is not anchored to the end of the line.
+```text
+...A
+..?
+D...
+```
 
-Note that `...` can appear both at the start and end of a line and if a line
-consists of `......` (i.e. starts and ends with the wildcard with nothing
-inbetween), it will match exactly one line. If the wildcard operator appears in
-any other locations, it is matched literally. Wildcard matching does not
-backtrack, so if a line consists solely of `..?` then the next matching line
-anchors the remainder of the search.
+will successfully match against literals such as:
 
-The following examples show `fm` in action using its defaults:
+```text
+xyzA
+B
+C
+Dxyz
+```
+
+
+## Intraline matching
+
+The intraline wildcard operator `...` can appear at the start and/or end of a
+line. `...X...` matches any literal line that contains "X"; `...X` matches any
+literal line that ends with "X"; and `X...` matches any literal line that
+starts with "X". `......` matches exactly one literal line (i.e. the contents
+of the literal line are irrelevant but this will not match against the end
+of the literal text).
+
+## Interline matching
+
+There are two interline wildcard operators that determine when multiple literal
+lines are matched. Both match zero or more literal lines until a match for the
+next *item* is found, at which point the search is *anchored* (i.e.
+backtracking will not occur before the anchor). An item is either:
+
+  * A single pattern line.
+  * A group of pattern lines. A group is the sequence of pattern lines between
+    two interline wildcard operators or, if no wildcard operator is found, the
+    end of the pattern.
+
+The interline wildcards are:
+
+  * `..?` matches until it finds a match for the line immediately after the
+    interline operator, at which point the search is anchored.
+
+  * `..~` matches until it finds a match for the next group, at which point the
+    search is anchored.
+
+Consider this pattern:
+
+```text
+A
+..?
+B
+C
+..?
+```
+
+This will match successfully against the literal:
+
+```text
+A
+D
+B
+C
+E
+```
+
+but fail to match against the literal:
+
+```text
+A
+D
+B
+B
+C
+E
+```
+
+because the `..?` matched against the first "B", anchored the search, then
+immediately failed to match against the second "B".
+
+In contrast the pattern:
+
+```text
+A
+..~
+B
+C
+..?
+```
+
+will, through backtracing, successfully match the literal.
+
+There are two reasons why you should default to using `..?` rather than `..~`.
+Most obviously `..?` does not backtrack and has linear performance. Less
+obviously `..?` prevents literals from matching when they contain multiple
+similar sequences. Informally, `..?` makes for more rigorous testing: `..?` can
+be thought of as "the next thing that matches must look like X" whereas `..~`
+says "skip things that are almost like X until you find something that is
+definitely X". 
+
+
+## API
 
 ```rust
 use fm::FMatcher;

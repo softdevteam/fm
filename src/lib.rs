@@ -1,5 +1,4 @@
 #![doc = include_str!("../README.md")]
-
 #![allow(clippy::upper_case_acronyms)]
 
 use std::{
@@ -14,6 +13,7 @@ use regex::Regex;
 
 const ERROR_CONTEXT: usize = 3;
 const LINE_ANCHOR_WILDCARD: &str = "..?";
+const GROUP_ANCHOR_WILDCARD: &str = "..~";
 const INTRALINE_WILDCARD: &str = "...";
 const ERROR_MARKER: &str = ">>";
 
@@ -42,7 +42,7 @@ impl Default for FMOptions {
 
 /// How should an [FMatchError] format itself? Where:
 ///
-///   * `Input` means the raw text passed to fmt.
+///   * `Input` means the literal text passed to fmt.
 ///   * `Summary` is the subset of pattern and text where an error was detected.
 ///
 /// For example a summary may look as follows (where `...` means "text above/below was elided"):
@@ -59,7 +59,7 @@ impl Default for FMOptions {
 ///    |8
 ///    ...
 ///
-/// Text (error at line 5):
+/// Literal text (error at line 5):
 ///    ...
 ///    |2
 ///    |3
@@ -185,10 +185,10 @@ impl<'a> FMBuilder<'a> {
     }
 
     fn validate(&self) -> Result<(), Box<dyn Error>> {
-        let lines = self.ptn.lines().collect::<Vec<_>>();
+        let lines = self.ptn.lines().map(|x| x.trim()).collect::<Vec<_>>();
 
         for (i, l) in lines.iter().enumerate() {
-            if l.trim() == "..." {
+            if *l == "..." {
                 return Err(Box::<dyn Error>::from(format!(
                     "'...' interline syntax on line {} is deprecated: use '..?' instead",
                     i + 1
@@ -198,11 +198,11 @@ impl<'a> FMBuilder<'a> {
 
         for i in 0..lines.len() {
             if i < lines.len() - 1
-                && lines[i].trim() == LINE_ANCHOR_WILDCARD
-                && lines[i + 1].trim() == LINE_ANCHOR_WILDCARD
+                && (lines[i] == LINE_ANCHOR_WILDCARD || lines[i] == GROUP_ANCHOR_WILDCARD)
+                && (lines[i + 1] == LINE_ANCHOR_WILDCARD || lines[i + 1] == GROUP_ANCHOR_WILDCARD)
             {
                 return Err(Box::<dyn Error>::from(format!(
-                    "Can't have two consecutive wildcards lines at lines {} and {}.",
+                    "Can't have two consecutive interline wildcards lines at lines {} and {}.",
                     i + 1,
                     i + 2
                 )));
@@ -264,6 +264,85 @@ impl<'a> FMatcher<'a> {
                             }
                             None => return Ok(()),
                         }
+                    } else if x.trim() == GROUP_ANCHOR_WILDCARD {
+                        let ptn_lines_off_orig = ptn_lines_off;
+                        let text_lines_off_orig = text_lines_off;
+                        ptnl = ptn_lines.next();
+                        // If the interline wildcard is the last part of the pattern, then we
+                        // implicitly match any remaining text: i.e. we're done!
+                        if ptnl.is_none() {
+                            return Ok(());
+                        }
+                        // We now have to perform (bounded) backtracking
+                        ptn_lines_off += 1;
+                        let mut ptn_lines_sub = ptn_lines.clone();
+                        let mut ptnl_sub = ptnl;
+                        let mut ptn_lines_off_sub = ptn_lines_off;
+                        let mut text_lines_sub = text_lines.clone();
+                        let mut text_lines_off_sub = text_lines_off;
+                        let mut textl_sub = textl;
+                        let mut names_sub = names.clone();
+                        loop {
+                            match (ptnl_sub, textl_sub) {
+                                (None, None) => return Ok(()),
+                                (Some(x), _)
+                                    if x.trim() == GROUP_ANCHOR_WILDCARD
+                                        || x.trim() == LINE_ANCHOR_WILDCARD =>
+                                {
+                                    // We've matched everything successfully
+                                    ptn_lines = ptn_lines_sub;
+                                    ptnl = ptnl_sub;
+                                    ptn_lines_off = ptn_lines_off_sub;
+                                    text_lines = text_lines_sub;
+                                    textl = textl_sub;
+                                    text_lines_off = text_lines_off_sub;
+                                    names = names_sub;
+                                    break;
+                                }
+                                (None, Some(_)) => {
+                                    match self.skip_blank_lines(&mut text_lines_sub, textl_sub) {
+                                        (Some(_), _) => {
+                                            return Err(FMatchError {
+                                                output_formatter: self.options.output_formatter,
+                                                ptn: self.ptn.to_owned(),
+                                                text: text.to_owned(),
+                                                ptn_line_off: ptn_lines_off_orig,
+                                                text_line_off: text_lines_off_orig,
+                                            })
+                                        }
+                                        (None, _) => return Ok(()),
+                                    }
+                                }
+                                (Some(_), None) => {
+                                    return Err(FMatchError {
+                                        output_formatter: self.options.output_formatter,
+                                        ptn: self.ptn.to_owned(),
+                                        text: text.to_owned(),
+                                        ptn_line_off: ptn_lines_off_orig,
+                                        text_line_off: text_lines_off_orig,
+                                    });
+                                }
+                                (Some(x), Some(y)) => {
+                                    if self.match_line(&mut names_sub, x, y) {
+                                        ptnl_sub = ptn_lines_sub.next();
+                                        ptn_lines_off_sub += 1;
+                                        textl_sub = text_lines_sub.next();
+                                        text_lines_off_sub += 1;
+                                    } else {
+                                        // We failed to match, so we need to reset the
+                                        // pattern, but advance the text.
+                                        ptn_lines_sub = ptn_lines.clone();
+                                        ptnl_sub = ptnl;
+                                        ptn_lines_off_sub += 1;
+                                        textl_sub = text_lines.next();
+                                        text_lines_off += 1;
+                                        text_lines_sub = text_lines.clone();
+                                        text_lines_off_sub = text_lines_off;
+                                        names_sub = names.clone();
+                                    }
+                                }
+                            }
+                        }
                     } else if self.match_line(&mut names, x, y) {
                         ptnl = ptn_lines.next();
                         ptn_lines_off += 1;
@@ -281,20 +360,16 @@ impl<'a> FMatcher<'a> {
                 }
                 (None, None) => return Ok(()),
                 (Some(x), None) => {
-                    if x.trim() == LINE_ANCHOR_WILDCARD {
-                        for ptnl in ptn_lines {
-                            ptn_lines_off += 1;
-                            if !self.match_line(&mut names, ptnl, "") {
-                                return Err(FMatchError {
-                                    output_formatter: self.options.output_formatter,
-                                    ptn: self.ptn.to_owned(),
-                                    text: text.to_owned(),
-                                    ptn_line_off: ptn_lines_off,
-                                    text_line_off: text_lines_off,
-                                });
-                            }
+                    if let LINE_ANCHOR_WILDCARD | GROUP_ANCHOR_WILDCARD = x.trim() {
+                        ptnl = ptn_lines.next();
+                        ptn_lines_off += 1;
+                        // If the interline wildcard is the last line in the pattern, we're done.
+                        // If it isn't, then the pattern hasn't matched: rather than explicitly
+                        // throw an error in this clause, we let the next iteration of the outer
+                        // while loop catch this case.
+                        if ptnl.is_none() {
+                            return Ok(());
                         }
-                        return Ok(());
                     } else {
                         match self.skip_blank_lines(&mut ptn_lines, Some(x)) {
                             (Some(_), skipped) => {
@@ -510,7 +585,7 @@ fn fmt_raw(f: &mut fmt::Formatter, text: &str) -> fmt::Result {
     let lhs = &format!("\n{}|", " ".repeat(err_mk_chars));
     writeln!(
         f,
-        "Raw text:{}{}",
+        "Literal text:{}{}",
         lhs,
         text.split("\n").collect::<Vec<_>>().join(lhs)
     )
@@ -630,6 +705,37 @@ mod tests {
         assert!(helper("a", "a\n\n"));
         assert!(!helper("a\n\nb", "a\n"));
         assert!(!helper("a\n", "a\n\nb"));
+    }
+
+    #[test]
+    fn groupings() {
+        fn helper(ptn: &str, text: &str) -> bool {
+            FMatcher::new(ptn).unwrap().matches(text).is_ok()
+        }
+        assert!(helper("a\n..~\nc\n", "a\nb\nc"));
+        assert!(helper("a\n..~\nc\n", "a\nc"));
+        assert!(helper("a\n..~\nc\nd\n", "a\nc\nd"));
+        assert!(helper("a\n..~\nc\nd\n", "a\nb\nc\nd"));
+        assert!(!helper("a\n..~\nc\nd\ne", "a\nb\nc\nd"));
+        assert!(!helper("a\n..~\nc\nd\n", "a\nb\nc\ne"));
+        assert!(!helper("a\n..~\nc\nd\n", "a\nc\ne\nc\ne"));
+        assert!(!helper("..~\nc", ""));
+        assert!(!helper("..~\nc", "c\nd"));
+        assert!(helper("a\n..~\nc\nd\n", "a\nc\ne\nc\nd"));
+        assert!(helper("a\n..~\nc\nd\ne", "a\nc\ne\nc\nd\ne"));
+        assert!(helper("a\n..~\nc\n..~", "a\nb\nc"));
+        assert!(helper("a\n..~\nc\n..?", "a\nb\nc"));
+        assert!(helper("a\n..~\nc\n..~\nd", "a\nb\nc\nd"));
+        assert!(!helper("a\n..~\nc\n..~\nd", "a\nb\nc\ne"));
+        assert!(helper("a\n..~\nc\n..?\nd", "a\nb\nc\nd"));
+        assert!(helper("a\n..~\nc\n..~\nd", "a\nb\nc\ne\nf\nd"));
+        assert!(helper("a\n..~\nc\nd\n..~\nd", "a\nb\nc\nd\nd"));
+        assert!(!helper("a\n..~\nc\nd\n..~\nd", "a\nb\nc\nd"));
+        assert!(!helper("a\n..~\nc\nd\n..~\nd", "a\nb\nc\nd\nd\nd"));
+        assert!(helper("..~\na\n..~\nb", "a\nb"));
+        assert!(!helper("..~\na\n..~\nb", "a"));
+        assert!(!helper("..~\na\n..~\nb", "a\nb\nc"));
+        assert!(helper("..~\na\n..~", "a\nb"));
     }
 
     #[test]
@@ -784,6 +890,13 @@ mod tests {
         assert!(!helper("$1 &1\n$1 &1...", "a b\na a c d"));
         assert!(!helper("$1 &1\n$1 &1 c...\n$1", "a b\na b c"));
         assert!(!helper("$1 &1\n$1 &1 c...\n$1", "a b\na b c\na\nb"));
+
+        assert!(helper("..~\n$1, $1\n..~", "a, a"));
+        assert!(helper("..~\n$1\n$1\n..~", "a\na"));
+        assert!(helper("..~\n$1\n$1\n..~", "a\nb\nb"));
+        assert!(helper("..~\n$1\n$1\n..~", "a\nb\na\na"));
+        assert!(helper("..~\n$1\n$1\n..~", "a\nb\na\nc\nc"));
+        assert!(!helper("..~\n$1\n$1\n..~", "a\nb\na\nb"));
     }
 
     #[test]
@@ -825,6 +938,10 @@ mod tests {
         assert_eq!(helper("..?\nb\nc\nd\n", "a\nb\nc\n0\ne"), (4, 4));
         assert_eq!(helper("..?\nc\nd\n", "a\nb\nc\n0\ne"), (3, 4));
         assert_eq!(helper("..?\nd\n", "a\nb\nc\n0\ne"), (2, 5));
+
+        assert_eq!(helper("a\n..~\nc\nd\ne", "a\nb\nc\nd"), (2, 2));
+        assert_eq!(helper("a\n..~\nc\nd", "a\nb\nc\ne"), (2, 2));
+        assert_eq!(helper("a\n..~\nc\nd", "a\nc\ne\nc\ne"), (2, 2));
     }
 
     #[test]
@@ -860,31 +977,31 @@ mod tests {
         match FMatcher::new("..?\n..?") {
             Err(e)
                 if e.to_string()
-                    == "Can't have two consecutive wildcards lines at lines 1 and 2." =>
+                    == "Can't have two consecutive interline wildcards lines at lines 1 and 2." =>
             {
                 ()
             }
-            _ => panic!(),
+            x => panic!("{x:?}"),
         }
 
-        match FMatcher::new("..?\n..?\n..?") {
+        match FMatcher::new("..~\n..?") {
             Err(e)
                 if e.to_string()
-                    == "Can't have two consecutive wildcards lines at lines 1 and 2." =>
+                    == "Can't have two consecutive interline wildcards lines at lines 1 and 2." =>
             {
                 ()
             }
-            _ => panic!(),
+            x => panic!("{x:?}"),
         }
 
-        match FMatcher::new("a\nb\n..?\n..?") {
+        match FMatcher::new("a\nb\n..?\n..~") {
             Err(e)
                 if e.to_string()
-                    == "Can't have two consecutive wildcards lines at lines 3 and 4." =>
+                    == "Can't have two consecutive interline wildcards lines at lines 3 and 4." =>
             {
                 ()
             }
-            _ => panic!(),
+            x => panic!("{x:?}"),
         }
     }
 
@@ -1021,7 +1138,7 @@ Text (error at line 5):
 
         assert_eq!(
             helper(OutputFormatter::InputThenSummary, &ptn, &text),
-            "Raw text:
+            "Literal text:
    |1
    |2
    |3
@@ -1058,7 +1175,7 @@ Text (error at line 5):
 
         assert_eq!(
             helper(OutputFormatter::InputOnly, &ptn, &text),
-            "Raw text:
+            "Literal text:
    |1
    |2
    |3
