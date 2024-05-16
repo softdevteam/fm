@@ -58,7 +58,8 @@ use std::{
 use regex::Regex;
 
 const ERROR_CONTEXT: usize = 3;
-const WILDCARD: &str = "...";
+const INTERLINE_WILDCARD: &str = "...";
+const INTRALINE_WILDCARD: &str = "...";
 const ERROR_MARKER: &str = ">>";
 
 #[derive(Debug)]
@@ -231,7 +232,9 @@ impl<'a> FMBuilder<'a> {
     fn validate(&self) -> Result<(), Box<dyn Error>> {
         let lines = self.ptn.lines().collect::<Vec<_>>();
         for i in 0..lines.len() {
-            if i < lines.len() - 1 && lines[i].trim() == WILDCARD && lines[i + 1].trim() == WILDCARD
+            if i < lines.len() - 1
+                && lines[i].trim() == INTERLINE_WILDCARD
+                && lines[i + 1].trim() == INTERLINE_WILDCARD
             {
                 return Err(Box::<dyn Error>::from(format!(
                     "Can't have two consecutive wildcards lines at lines {} and {}.",
@@ -281,7 +284,7 @@ impl<'a> FMatcher<'a> {
         loop {
             match (ptnl, textl) {
                 (Some(x), Some(y)) => {
-                    if x.trim() == WILDCARD {
+                    if x.trim() == INTERLINE_WILDCARD {
                         ptnl = ptn_lines.next();
                         ptn_lines_off += 1;
                         match ptnl {
@@ -314,7 +317,7 @@ impl<'a> FMatcher<'a> {
                 }
                 (None, None) => return Ok(()),
                 (Some(x), None) => {
-                    if x.trim() == WILDCARD {
+                    if x.trim() == INTERLINE_WILDCARD {
                         for ptnl in ptn_lines {
                             ptn_lines_off += 1;
                             if !self.match_line(&mut names, ptnl, "") {
@@ -413,15 +416,15 @@ impl<'a> FMatcher<'a> {
             text = text.trim_end();
         }
 
-        let sww = ptn.starts_with(WILDCARD);
-        let eww = ptn.ends_with(WILDCARD);
+        let sww = ptn.starts_with(INTRALINE_WILDCARD);
+        let eww = ptn.ends_with(INTRALINE_WILDCARD);
         if sww && eww {
-            text.contains(&ptn[WILDCARD.len()..ptn.len() - WILDCARD.len()])
+            text.contains(&ptn[INTRALINE_WILDCARD.len()..ptn.len() - INTRALINE_WILDCARD.len()])
         } else if sww {
-            text.ends_with(&ptn[WILDCARD.len()..])
+            text.ends_with(&ptn[INTRALINE_WILDCARD.len()..])
         } else if self.options.name_matchers.is_empty() {
             if eww {
-                text.starts_with(&ptn[..ptn.len() - WILDCARD.len()])
+                text.starts_with(&ptn[..ptn.len() - INTRALINE_WILDCARD.len()])
             } else {
                 ptn == text
             }
@@ -480,7 +483,9 @@ impl<'a> FMatcher<'a> {
                     break;
                 }
             }
-            if (eww && text.starts_with(&ptn[..ptn.len() - WILDCARD.len()])) || ptn == text {
+            if (eww && text.starts_with(&ptn[..ptn.len() - INTRALINE_WILDCARD.len()]))
+                || ptn == text
+            {
                 names.extend(new_names);
                 true
             } else {
