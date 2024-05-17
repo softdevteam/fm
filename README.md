@@ -30,12 +30,13 @@ starts with "X". `......` matches exactly one literal line (i.e. the contents
 of the literal line are irrelevant but this will not match against the end
 of the literal text).
 
+
 ## Interline matching
 
-There are two interline wildcard operators that determine when multiple literal
-lines are matched. Both match zero or more literal lines until a match for the
-next *item* is found, at which point the search is *anchored* (i.e.
-backtracking will not occur before the anchor). An item is either:
+There are two interline wildcard operators that match zero or more literal
+lines until a match for the next *item* is found, at which point the search is
+*anchored* (i.e. backtracking will not occur before the anchor). An item is
+either:
 
   * A single pattern line.
   * A group of pattern lines. A group is the sequence of pattern lines between
@@ -44,11 +45,17 @@ backtracking will not occur before the anchor). An item is either:
 
 The interline wildcards are:
 
-  * `...` matches until it finds a match for the line immediately after the
-    interline operator, at which point the search is anchored.
+  * The *prefix match* wildcard `...` matches until it finds a match for the
+    line immediately after the interline operator ("the prefix"), at which
+    point the search is anchored. This wildcard does not backtrack.
+  * The *group match* wildcard `..~` matches until it finds a match for the
+    next group, at which point the search is anchored. This wildcard
+    backtracks, though never further than one group.
 
-  * `..~` matches until it finds a match for the next group, at which point the
-    search is anchored.
+Interline wildcards cannot directly follow each other i.e. `...\n...?` is an
+invalid pattern. Interline wildcards can appear at the beginning or end of
+a pattern: at the end of a pattern, both interline wildcards have identical
+semantics to each other.
 
 Consider this pattern:
 
@@ -81,8 +88,8 @@ C
 E
 ```
 
-because the `...` matched against the first "B", anchored the search, then
-immediately failed to match against the second "B".
+because the `...` matches against the first "B", which anchors the search, then
+immediately fails to match against the second "B".
 
 In contrast the pattern:
 
@@ -94,15 +101,12 @@ C
 ...
 ```
 
-will, through backtracing, successfully match the literal.
+does match the literal because `..~` backtracks on the second "B".
 
 There are two reasons why you should default to using `...` rather than `..~`.
 Most obviously `...` does not backtrack and has linear performance. Less
-obviously `...` prevents literals from matching when they contain multiple
-similar sequences. Informally, `...` makes for more rigorous testing: `...` can
-be thought of as "the next thing that matches must look like X" whereas `..~`
-says "skip things that are almost like X until you find something that is
-definitely X". 
+obviously `...` is a more rigorous test, since it cannot skip prefix matches
+(i.e. the next line after the `...` in the pattern) in the literal.
 
 
 ## API
