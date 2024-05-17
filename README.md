@@ -7,7 +7,7 @@ match parts of a line and to skip multiple lines of text. For example this
 
 ```text
 ...A
-..?
+...
 D...
 ```
 
@@ -44,7 +44,7 @@ backtracking will not occur before the anchor). An item is either:
 
 The interline wildcards are:
 
-  * `..?` matches until it finds a match for the line immediately after the
+  * `...` matches until it finds a match for the line immediately after the
     interline operator, at which point the search is anchored.
 
   * `..~` matches until it finds a match for the next group, at which point the
@@ -54,10 +54,10 @@ Consider this pattern:
 
 ```text
 A
-..?
+...
 B
 C
-..?
+...
 ```
 
 This will match successfully against the literal:
@@ -81,7 +81,7 @@ C
 E
 ```
 
-because the `..?` matched against the first "B", anchored the search, then
+because the `...` matched against the first "B", anchored the search, then
 immediately failed to match against the second "B".
 
 In contrast the pattern:
@@ -91,15 +91,15 @@ A
 ..~
 B
 C
-..?
+...
 ```
 
 will, through backtracing, successfully match the literal.
 
-There are two reasons why you should default to using `..?` rather than `..~`.
-Most obviously `..?` does not backtrack and has linear performance. Less
-obviously `..?` prevents literals from matching when they contain multiple
-similar sequences. Informally, `..?` makes for more rigorous testing: `..?` can
+There are two reasons why you should default to using `...` rather than `..~`.
+Most obviously `...` does not backtrack and has linear performance. Less
+obviously `...` prevents literals from matching when they contain multiple
+similar sequences. Informally, `...` makes for more rigorous testing: `...` can
 be thought of as "the next thing that matches must look like X" whereas `..~`
 says "skip things that are almost like X until you find something that is
 definitely X". 
@@ -113,8 +113,8 @@ use fm::FMatcher;
 assert!(FMatcher::new("a").unwrap().matches("a").is_ok());
 assert!(FMatcher::new(" a ").unwrap().matches("a").is_ok());
 assert!(FMatcher::new("a").unwrap().matches("b").is_err());
-assert!(FMatcher::new("a\n..?\nb").unwrap().matches("a\na\nb").is_ok());
-assert!(FMatcher::new("a\n..?\nb").unwrap().matches("a\na\nb\nb").is_err());
+assert!(FMatcher::new("a\n...\nb").unwrap().matches("a\na\nb").is_ok());
+assert!(FMatcher::new("a\n...\nb").unwrap().matches("a\na\nb\nb").is_err());
 ```
 
 When a match fails, the matcher returns an error indicating the line number at
