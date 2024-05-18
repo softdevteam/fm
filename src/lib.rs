@@ -557,7 +557,7 @@ impl fmt::Display for FMatchError {
             ),
             OutputFormatter::InputThenSummary => {
                 fmt_raw(f, &self.text)?;
-                writeln!(f, "")?;
+                writeln!(f)?;
                 fmt_summary(
                     f,
                     &self.ptn,
@@ -578,7 +578,7 @@ fn fmt_raw(f: &mut fmt::Formatter, text: &str) -> fmt::Result {
         f,
         "Literal text:{}{}",
         lhs,
-        text.split("\n").collect::<Vec<_>>().join(lhs)
+        text.split('\n').collect::<Vec<_>>().join(lhs)
     )
 }
 
@@ -632,9 +632,9 @@ fn fmt_summary(
     };
 
     writeln!(f, "Pattern (error at line {}):", ptn_line_off)?;
-    display_lines(f, &ptn, ptn_line_off)?;
+    display_lines(f, ptn, ptn_line_off)?;
     writeln!(f, "\nText (error at line {}):", text_line_off)?;
-    display_lines(f, &text, text_line_off)
+    display_lines(f, text, text_line_off)
 }
 
 /// A short error message. We don't reuse the longer message from `Display` as a Rust panic
