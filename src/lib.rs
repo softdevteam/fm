@@ -202,9 +202,9 @@ impl<'a> FMBuilder<'a> {
 
         for (ref ptn_re, _) in &self.options.name_matchers {
             for (i, l) in lines.iter().enumerate() {
-                if l.starts_with("...") && ptn_re.is_match(l) {
+                if l.starts_with(INTRALINE_WILDCARD) && ptn_re.is_match(l) {
                     return Err(Box::<dyn Error>::from(format!(
-                        "Can't mix name matching with wildcards at start of line {}.",
+                        "Can't mix name matching with start-of-line wildcards at line {}.",
                         i + 1
                     )));
                 }
@@ -460,62 +460,63 @@ impl<'a> FMatcher<'a> {
             }
         } else {
             let mut new_names = HashMap::new();
-            loop {
-                let mut matched = false;
+            let mut ptn_i = 0;
+            let mut text_i = 0;
+            'a: while ptn_i < ptn.len()
+                && text_i < text.len()
+                && &ptn[ptn_i..] != INTRALINE_WILDCARD
+            {
                 for (ref ptn_re, ref text_re) in &self.options.name_matchers {
-                    if let Some(ptnm) = ptn_re.find(ptn) {
-                        matched = true;
-                        if ptnm.start() == ptnm.end() {
-                            panic!("Name pattern matched the empty string.");
+                    if let Some(ptnm) = ptn_re.find(&ptn[ptn_i..]) {
+                        if ptnm.start() != 0 {
+                            continue;
                         }
-                        #[allow(clippy::suspicious_operation_groupings)]
-                        if ptnm.start() > text.len() || ptn[..ptnm.start()] != text[..ptnm.start()]
-                        {
-                            return false;
-                        }
-                        ptn = &ptn[ptnm.end()..];
-                        text = &text[ptnm.start()..];
-                        if let Some(textm) = text_re.find(text) {
-                            if self.options.distinct_name_matching {
-                                for (x, y) in names.iter().chain(new_names.iter()) {
-                                    if x != &ptnm.as_str() && y == &textm.as_str() {
-                                        return false;
-                                    }
+                        match text_re.find(&text[text_i..]) {
+                            Some(textm) if textm.start() == 0 => {
+                                let key = ptnm.as_str();
+                                let val = textm.as_str();
+                                if val.is_empty() {
+                                    panic!("Text pattern matched the empty string.");
                                 }
-                            }
-                            if textm.start() == textm.end() {
-                                panic!("Text pattern matched the empty string.");
-                            }
-                            match names.entry(ptnm.as_str()) {
-                                Entry::Occupied(e) => {
-                                    if e.get() != &textm.as_str() {
-                                        return false;
-                                    }
-                                }
-                                Entry::Vacant(_) => match new_names.entry(ptnm.as_str()) {
-                                    Entry::Occupied(e) => {
-                                        if e.get() != &textm.as_str() {
+                                if self.options.distinct_name_matching {
+                                    for (x, y) in names.iter().chain(new_names.iter()) {
+                                        if *x != key && *y == val {
                                             return false;
                                         }
                                     }
-                                    Entry::Vacant(e) => {
-                                        e.insert(textm.as_str());
+                                }
+                                match names.entry(key) {
+                                    Entry::Occupied(e) => {
+                                        if *e.get() != val {
+                                            return false;
+                                        }
                                     }
-                                },
+                                    Entry::Vacant(_) => match new_names.entry(key) {
+                                        Entry::Occupied(e) => {
+                                            if *e.get() != val {
+                                                return false;
+                                            }
+                                        }
+                                        Entry::Vacant(e) => {
+                                            e.insert(val);
+                                        }
+                                    },
+                                }
+                                ptn_i += ptnm.len();
+                                text_i += textm.len();
+                                continue 'a;
                             }
-                            text = &text[textm.end()..];
-                        } else {
-                            return false;
+                            Some(_) | None => return false,
                         }
                     }
                 }
-                if !matched {
-                    break;
+                if ptn[ptn_i..ptn_i + 1] != text[text_i..text_i + 1] {
+                    return false;
                 }
+                ptn_i += 1;
+                text_i += 1;
             }
-            if (eww && text.starts_with(&ptn[..ptn.len() - INTRALINE_WILDCARD.len()]))
-                || ptn == text
-            {
+            if (ptn_i == ptn.len() && text_i == text.len()) || &ptn[ptn_i..] == INTRALINE_WILDCARD {
                 names.extend(new_names);
                 true
             } else {
@@ -872,6 +873,9 @@ mod tests {
 
         assert!(helper("$1 &1", "a a"));
         assert!(helper("$1 &1", "a b"));
+        assert!(helper("&1 $1 &1", "a b a"));
+        assert!(!helper("&1 $1 &1", "a b b"));
+        assert!(helper("&1 $1 &1", "a a a"));
         assert!(helper("$1 &1 $1", "a b a"));
         assert!(helper("$1 &1 &1", "a b b"));
         assert!(!helper("$1 &1 &1", "a b a"));
@@ -1005,7 +1009,7 @@ mod tests {
             .name_matcher(ptn_re, text_re);
         assert_eq!(
             &(*(builder.build().unwrap_err())).to_string(),
-            "Can't mix name matching with wildcards at start of line 2."
+            "Can't mix name matching with start-of-line wildcards at line 2."
         );
     }
 
