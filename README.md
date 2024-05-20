@@ -134,8 +134,8 @@ can set options as follows:
 ```rust
 use {fm::FMBuilder, regex::Regex};
 
-let ptn_re = Regex::new(r"\$.+?\b").unwrap();
-let text_re = Regex::new(r".+?\b").unwrap();
+let ptn_re = Regex::new(r"\$[0-9]+?\b").unwrap();
+let text_re = Regex::new(r"[a-z]+?\b").unwrap();
 let matcher = FMBuilder::new("$1 $1")
                         .unwrap()
                         .name_matcher(ptn_re, text_re)

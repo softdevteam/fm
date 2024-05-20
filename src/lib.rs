@@ -20,7 +20,7 @@ const ERROR_MARKER: &str = ">>";
 #[derive(Debug)]
 struct FMOptions {
     output_formatter: OutputFormatter,
-    name_matchers: Vec<(Regex, Regex)>,
+    name_matchers: Vec<(Regex, Regex, bool)>,
     distinct_name_matching: bool,
     ignore_leading_whitespace: bool,
     ignore_trailing_whitespace: bool,
@@ -123,8 +123,8 @@ impl<'a> FMBuilder<'a> {
     /// ```rust
     /// use {fm::FMBuilder, regex::Regex};
     ///
-    /// let ptn_re = Regex::new(r"\$.+?\b").unwrap();
-    /// let text_re = Regex::new(r".+?\b").unwrap();
+    /// let ptn_re = Regex::new(r"\$[1]+?\b").unwrap();
+    /// let text_re = Regex::new(r"[a-b]+?\b").unwrap();
     /// let matcher = FMBuilder::new("$1 b $1")
     ///                         .unwrap()
     ///                         .name_matcher(ptn_re, text_re)
@@ -142,13 +142,44 @@ impl<'a> FMBuilder<'a> {
     /// Multiple name matchers are allowed: they are matched in the order they were added to
     /// `FMBuilder`.
     pub fn name_matcher(mut self, ptn_re: Regex, text_re: Regex) -> Self {
-        self.options.name_matchers.push((ptn_re, text_re));
+        self.options.name_matchers.push((ptn_re, text_re, false));
+        self
+    }
+
+    /// Add a name matcher that has the same semantics as a name matcher added with
+    /// [Self::name_matcher] *but* which ignores the contents of the matched text. This can be
+    /// used to ensure that the text follows a certain "shape" but without worrying about either a)
+    /// the concrete value b) having to generate fresh names for each such instance. This can be
+    /// combined with "normal" name matching, as in the following example:
+    ///
+    /// ```rust
+    /// use {fm::FMBuilder, regex::Regex};
+    ///
+    /// let ptn_re = Regex::new(r"\$[1]+?\b").unwrap();
+    /// let ptn_ignore_re = Regex::new(r"\$_\b").unwrap();
+    /// let text_re = Regex::new(r"[a-b]+?\b").unwrap();
+    /// let matcher = FMBuilder::new("$1 $_ $1 $_")
+    ///                         .unwrap()
+    ///                         .name_matcher(ptn_re, text_re.clone())
+    ///                         .name_matcher_ignore(ptn_ignore_re, text_re)
+    ///                         .build()
+    ///                         .unwrap();
+    /// assert!(matcher.matches("a b a a").is_ok());
+    /// assert!(matcher.matches("a b b a").is_err());
+    /// ```
+    ///
+    /// As this shows, once `$1` has matched "a", all further instances of `$1` must also match
+    /// "a", but `_` can match different values at different points. This is true even if distinct
+    /// name matching (see [Self::distinct_name_matching] is enabled.
+    pub fn name_matcher_ignore(mut self, ptn_re: Regex, text_re: Regex) -> Self {
+        self.options.name_matchers.push((ptn_re, text_re, true));
         self
     }
 
     /// If `yes`, then different names cannot match the same text value. For example if `$1` binds
     /// to `a` then `$2` will refuse to match against `a` (though `$1` will continue to match
-    /// against only `a`). Defaults to `false`.
+    /// against only `a`). Note that ignorable name matches (see [Self::name_matcher_ignore]) are
+    /// never subject to distinct name matching. Defaults to `false`.
     pub fn distinct_name_matching(mut self, yes: bool) -> Self {
         self.options.distinct_name_matching = yes;
         self
@@ -200,7 +231,7 @@ impl<'a> FMBuilder<'a> {
             }
         }
 
-        for (ref ptn_re, _) in &self.options.name_matchers {
+        for (ref ptn_re, _, _) in &self.options.name_matchers {
             for (i, l) in lines.iter().enumerate() {
                 if l.starts_with(INTRALINE_WILDCARD) && ptn_re.is_match(l) {
                     return Err(Box::<dyn Error>::from(format!(
@@ -466,7 +497,7 @@ impl<'a> FMatcher<'a> {
                 && text_i < text.len()
                 && &ptn[ptn_i..] != INTRALINE_WILDCARD
             {
-                for (ref ptn_re, ref text_re) in &self.options.name_matchers {
+                for (ref ptn_re, ref text_re, ignore) in &self.options.name_matchers {
                     if let Some(ptnm) = ptn_re.find(&ptn[ptn_i..]) {
                         if ptnm.start() != 0 {
                             continue;
@@ -478,29 +509,31 @@ impl<'a> FMatcher<'a> {
                                 if val.is_empty() {
                                     panic!("Text pattern matched the empty string.");
                                 }
-                                if self.options.distinct_name_matching {
-                                    for (x, y) in names.iter().chain(new_names.iter()) {
-                                        if *x != key && *y == val {
-                                            return false;
+                                if !ignore {
+                                    if self.options.distinct_name_matching {
+                                        for (x, y) in names.iter().chain(new_names.iter()) {
+                                            if *x != key && *y == val {
+                                                return false;
+                                            }
                                         }
                                     }
-                                }
-                                match names.entry(key) {
-                                    Entry::Occupied(e) => {
-                                        if *e.get() != val {
-                                            return false;
-                                        }
-                                    }
-                                    Entry::Vacant(_) => match new_names.entry(key) {
+                                    match names.entry(key) {
                                         Entry::Occupied(e) => {
                                             if *e.get() != val {
                                                 return false;
                                             }
                                         }
-                                        Entry::Vacant(e) => {
-                                            e.insert(val);
-                                        }
-                                    },
+                                        Entry::Vacant(_) => match new_names.entry(key) {
+                                            Entry::Occupied(e) => {
+                                                if *e.get() != val {
+                                                    return false;
+                                                }
+                                            }
+                                            Entry::Vacant(e) => {
+                                                e.insert(val);
+                                            }
+                                        },
+                                    }
                                 }
                                 ptn_i += ptnm.len();
                                 text_i += textm.len();
@@ -655,6 +688,7 @@ impl Error for FMatchError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::proptest;
 
     #[test]
     fn defaults() {
@@ -892,6 +926,53 @@ mod tests {
         assert!(helper("..~\n$1\n$1\n..~", "a\nb\na\na"));
         assert!(helper("..~\n$1\n$1\n..~", "a\nb\na\nc\nc"));
         assert!(!helper("..~\n$1\n$1\n..~", "a\nb\na\nb"));
+    }
+
+    #[test]
+    fn name_matcher_ignore() {
+        let nameptn_ignore_re = Regex::new(r"\$_\b").unwrap();
+        let nameptn_normal_re = Regex::new(r"\$[^_]+?\b").unwrap();
+        let name_re = Regex::new(r"[a-z]+?\b").unwrap();
+        let helper = |ptn: &str, text: &str| -> bool {
+            FMBuilder::new(ptn)
+                .unwrap()
+                .name_matcher_ignore(nameptn_ignore_re.clone(), name_re.clone())
+                .name_matcher(nameptn_normal_re.clone(), name_re.clone())
+                .build()
+                .unwrap()
+                .matches(text)
+                .is_ok()
+        };
+
+        assert!(helper("$1, $1", "a, a"));
+        assert!(!helper("$1, $1", "a, b"));
+        assert!(helper("$_, $_", "a, b"));
+        assert!(!helper("$_, $_", "1, 2"));
+        assert!(helper("$1, $_, $1", "a, b, a"));
+        assert!(helper("$1, $_, $1", "a, a, a"));
+    }
+
+    #[test]
+    fn name_matcher_ignore_distinct_matching() {
+        let nameptn_ignore_re = Regex::new(r"\$_\b").unwrap();
+        let nameptn_normal_re = Regex::new(r"\$[^_]+?\b").unwrap();
+        let name_re = Regex::new(r"[a-z]+?\b").unwrap();
+        let helper = |ptn: &str, text: &str| -> bool {
+            FMBuilder::new(ptn)
+                .unwrap()
+                .distinct_name_matching(true)
+                .name_matcher_ignore(nameptn_ignore_re.clone(), name_re.clone())
+                .name_matcher(nameptn_normal_re.clone(), name_re.clone())
+                .build()
+                .unwrap()
+                .matches(text)
+                .is_ok()
+        };
+
+        assert!(helper("$1 $1 $2 $2", "a a b b"));
+        assert!(!helper("$1 $1 $2 $2", "a a a a"));
+        assert!(helper("$1 $1 $_ $_", "a a b b"));
+        assert!(helper("$1 $1 $_ $_", "a a a a"));
     }
 
     #[test]
@@ -1193,5 +1274,61 @@ Text (error at line 5):
         assert!(helper("a\na ", "a\na "));
         assert!(!helper("a\na", "a\na "));
         assert!(!helper("a\na ", "a\na"));
+    }
+
+    proptest! {
+        #[test]
+        fn proptest_basic(ptn in "[a-z ]{0,3}", text in "[a-z ]{0,3}") {
+            let helper = |ptn: &str, text: &str| -> bool {
+                FMBuilder::new(ptn)
+                    .unwrap()
+                    .build()
+                    .unwrap()
+                    .matches(text)
+                    .is_ok()
+            };
+
+            helper(&ptn, &text);
+        }
+    }
+
+    #[test]
+    fn proptest_name_matcher() {
+        let ptn_re = Regex::new("\\$[0-9]+?\\b").unwrap();
+        let text_re = Regex::new("[a-z]+?\\b").unwrap();
+        proptest!(|(ptn in "([a-z ]|\\$[0-9]){0,10}", text in "[a-z ]{0,10}")| {
+            let helper = |ptn: &str, text: &str| -> bool {
+                FMBuilder::new(ptn)
+                    .unwrap()
+                    .name_matcher(ptn_re.clone(), text_re.clone())
+                    .build()
+                    .unwrap()
+                    .matches(text)
+                    .is_ok()
+            };
+
+            helper(&ptn, &text);
+        });
+    }
+
+    #[test]
+    fn proptest_name_matcher_ignore() {
+        let ptn_re = Regex::new("\\$[0-9]+?\\b").unwrap();
+        let ptn_ignore_re = Regex::new("\\$_\\b").unwrap();
+        let text_re = Regex::new("[a-z]+?\\b").unwrap();
+        proptest!(|(ptn in "([a-z ]|\\$[0-9_]){0,10}", text in "[a-z ]{0,10}")| {
+            let helper = |ptn: &str, text: &str| -> bool {
+                FMBuilder::new(ptn)
+                    .unwrap()
+                    .name_matcher(ptn_re.clone(), text_re.clone())
+                    .name_matcher_ignore(ptn_ignore_re.clone(), text_re.clone())
+                    .build()
+                    .unwrap()
+                    .matches(text)
+                    .is_ok()
+            };
+
+            helper(&ptn, &text);
+        });
     }
 }
