@@ -688,6 +688,7 @@ impl Error for FMatchError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::proptest;
 
     #[test]
     fn defaults() {
@@ -1273,5 +1274,61 @@ Text (error at line 5):
         assert!(helper("a\na ", "a\na "));
         assert!(!helper("a\na", "a\na "));
         assert!(!helper("a\na ", "a\na"));
+    }
+
+    proptest! {
+        #[test]
+        fn proptest_basic(ptn in "[a-z ]{0,3}", text in "[a-z ]{0,3}") {
+            let helper = |ptn: &str, text: &str| -> bool {
+                FMBuilder::new(ptn)
+                    .unwrap()
+                    .build()
+                    .unwrap()
+                    .matches(text)
+                    .is_ok()
+            };
+
+            helper(&ptn, &text);
+        }
+    }
+
+    #[test]
+    fn proptest_name_matcher() {
+        let ptn_re = Regex::new("\\$[0-9]+?\\b").unwrap();
+        let text_re = Regex::new("[a-z]+?\\b").unwrap();
+        proptest!(|(ptn in "([a-z ]|\\$[0-9]){0,10}", text in "[a-z ]{0,10}")| {
+            let helper = |ptn: &str, text: &str| -> bool {
+                FMBuilder::new(ptn)
+                    .unwrap()
+                    .name_matcher(ptn_re.clone(), text_re.clone())
+                    .build()
+                    .unwrap()
+                    .matches(text)
+                    .is_ok()
+            };
+
+            helper(&ptn, &text);
+        });
+    }
+
+    #[test]
+    fn proptest_name_matcher_ignore() {
+        let ptn_re = Regex::new("\\$[0-9]+?\\b").unwrap();
+        let ptn_ignore_re = Regex::new("\\$_\\b").unwrap();
+        let text_re = Regex::new("[a-z]+?\\b").unwrap();
+        proptest!(|(ptn in "([a-z ]|\\$[0-9_]){0,10}", text in "[a-z ]{0,10}")| {
+            let helper = |ptn: &str, text: &str| -> bool {
+                FMBuilder::new(ptn)
+                    .unwrap()
+                    .name_matcher(ptn_re.clone(), text_re.clone())
+                    .name_matcher_ignore(ptn_ignore_re.clone(), text_re.clone())
+                    .build()
+                    .unwrap()
+                    .matches(text)
+                    .is_ok()
+            };
+
+            helper(&ptn, &text);
+        });
     }
 }
