@@ -271,22 +271,39 @@ impl<'a> FMatcher<'a> {
             match (ptnl, textl) {
                 (Some(x), Some(y)) => {
                     if x.trim() == LINE_ANCHOR_WILDCARD {
+                        let text_lines_off_orig = text_lines_off;
                         ptnl = ptn_lines.next();
                         ptn_lines_off += 1;
                         match ptnl {
                             Some(x) => {
+                                let mut succ = false;
                                 while let Some(y) = textl {
-                                    text_lines_off += 1;
                                     if self.match_line(&mut names, x, y) {
+                                        succ = true;
                                         break;
                                     }
+                                    text_lines_off += 1;
                                     textl = text_lines.next();
                                 }
-                                text_lines_off -= 1;
+                                if !succ {
+                                    return Err(FMatchError {
+                                        output_formatter: self.options.output_formatter,
+                                        ptn: self.ptn.to_owned(),
+                                        text: text.to_owned(),
+                                        ptn_line_off: ptn_lines_off,
+                                        text_line_off: text_lines_off_orig,
+                                        names: names
+                                            .iter()
+                                            .map(|(x, y)| (x.to_string(), y.to_string()))
+                                            .collect::<HashMap<_, _>>(),
+                                    });
+                                }
                             }
                             None => return Ok(()),
                         }
                     } else if x.trim() == GROUP_ANCHOR_WILDCARD {
+                        ptn_lines_off += 1;
+                        // We now have to perform (bounded) backtracking
                         let ptn_lines_off_orig = ptn_lines_off;
                         let text_lines_off_orig = text_lines_off;
                         ptnl = ptn_lines.next();
@@ -295,11 +312,8 @@ impl<'a> FMatcher<'a> {
                         if ptnl.is_none() {
                             return Ok(());
                         }
-                        // We now have to perform (bounded) backtracking
-                        ptn_lines_off += 1;
                         let mut ptn_lines_sub = ptn_lines.clone();
                         let mut ptnl_sub = ptnl;
-                        let mut ptn_lines_off_sub = ptn_lines_off;
                         let mut text_lines_sub = text_lines.clone();
                         let mut text_lines_off_sub = text_lines_off;
                         let mut textl_sub = textl;
@@ -314,7 +328,6 @@ impl<'a> FMatcher<'a> {
                                     // We've matched everything successfully
                                     ptn_lines = ptn_lines_sub;
                                     ptnl = ptnl_sub;
-                                    ptn_lines_off = ptn_lines_off_sub;
                                     text_lines = text_lines_sub;
                                     textl = textl_sub;
                                     text_lines_off = text_lines_off_sub;
@@ -330,6 +343,10 @@ impl<'a> FMatcher<'a> {
                                                 text: text.to_owned(),
                                                 ptn_line_off: ptn_lines_off_orig,
                                                 text_line_off: text_lines_off_orig,
+                                                names: names
+                                                    .iter()
+                                                    .map(|(x, y)| (x.to_string(), y.to_string()))
+                                                    .collect::<HashMap<_, _>>(),
                                             })
                                         }
                                         (None, _) => return Ok(()),
@@ -342,12 +359,16 @@ impl<'a> FMatcher<'a> {
                                         text: text.to_owned(),
                                         ptn_line_off: ptn_lines_off_orig,
                                         text_line_off: text_lines_off_orig,
+                                        names: names
+                                            .iter()
+                                            .map(|(x, y)| (x.to_string(), y.to_string()))
+                                            .collect::<HashMap<_, _>>(),
                                     });
                                 }
                                 (Some(x), Some(y)) => {
                                     if self.match_line(&mut names_sub, x, y) {
                                         ptnl_sub = ptn_lines_sub.next();
-                                        ptn_lines_off_sub += 1;
+                                        ptn_lines_off += 1;
                                         textl_sub = text_lines_sub.next();
                                         text_lines_off_sub += 1;
                                     } else {
@@ -355,7 +376,7 @@ impl<'a> FMatcher<'a> {
                                         // pattern, but advance the text.
                                         ptn_lines_sub = ptn_lines.clone();
                                         ptnl_sub = ptnl;
-                                        ptn_lines_off_sub += 1;
+                                        ptn_lines_off = ptn_lines_off_orig;
                                         textl_sub = text_lines.next();
                                         text_lines_off += 1;
                                         text_lines_sub = text_lines.clone();
@@ -377,6 +398,10 @@ impl<'a> FMatcher<'a> {
                             text: text.to_owned(),
                             ptn_line_off: ptn_lines_off,
                             text_line_off: text_lines_off,
+                            names: names
+                                .iter()
+                                .map(|(x, y)| (x.to_string(), y.to_string()))
+                                .collect::<HashMap<_, _>>(),
                         });
                     }
                 }
@@ -401,6 +426,10 @@ impl<'a> FMatcher<'a> {
                                     text: text.to_owned(),
                                     ptn_line_off: ptn_lines_off + skipped,
                                     text_line_off: text_lines_off,
+                                    names: names
+                                        .iter()
+                                        .map(|(x, y)| (x.to_string(), y.to_string()))
+                                        .collect::<HashMap<_, _>>(),
                                 });
                             }
                             (None, _) => return Ok(()),
@@ -418,6 +447,10 @@ impl<'a> FMatcher<'a> {
                         text: text.to_owned(),
                         ptn_line_off: ptn_lines_off,
                         text_line_off: text_lines_off + skipped,
+                        names: names
+                            .iter()
+                            .map(|(x, y)| (x.to_string(), y.to_string()))
+                            .collect::<HashMap<_, _>>(),
                     });
                 }
             }
@@ -567,6 +600,7 @@ pub struct FMatchError {
     text: String,
     ptn_line_off: usize,
     text_line_off: usize,
+    names: HashMap<String, String>,
 }
 
 impl FMatchError {
@@ -588,6 +622,7 @@ impl fmt::Display for FMatchError {
                 self.ptn_line_off,
                 &self.text,
                 self.text_line_off,
+                &self.names,
             ),
             OutputFormatter::InputThenSummary => {
                 fmt_raw(f, &self.text)?;
@@ -598,6 +633,7 @@ impl fmt::Display for FMatchError {
                     self.ptn_line_off,
                     &self.text,
                     self.text_line_off,
+                    &self.names,
                 )
             }
             OutputFormatter::InputOnly => fmt_raw(f, &self.text),
@@ -622,6 +658,7 @@ fn fmt_summary(
     ptn_line_off: usize,
     text: &str,
     text_line_off: usize,
+    names: &HashMap<String, String>,
 ) -> fmt::Result {
     // Figure out how many characters are required for the LHS margin.
     let err_mk_chars = ERROR_MARKER.chars().count() + ' '.len_utf8();
@@ -667,6 +704,16 @@ fn fmt_summary(
 
     writeln!(f, "Pattern (error at line {}):", ptn_line_off)?;
     display_lines(f, ptn, ptn_line_off)?;
+    if !names.is_empty() {
+        let mut names = names.iter().collect::<Vec<(_, _)>>();
+        names.sort();
+        let names = names
+            .iter()
+            .map(|(k, v)| format!("{k}: {v}"))
+            .collect::<Vec<_>>()
+            .join("\n  ");
+        writeln!(f, "\nNames at point of failure:\n  {names}")?;
+    }
     writeln!(f, "\nText (error at line {}):", text_line_off)?;
     display_lines(f, text, text_line_off)
 }
@@ -990,7 +1037,7 @@ mod tests {
             (err.ptn_line_off(), err.text_line_off())
         };
 
-        assert_eq!(helper("a\n...\nd", "a\nb\nc"), (3, 3));
+        assert_eq!(helper("a\n...\nd", "a\nb\nc"), (3, 2));
         assert_eq!(helper("a\nb...", "a\nb\nc"), (3, 3));
         assert_eq!(helper("a\n...b...", "a\nxb\nc"), (3, 3));
 
@@ -1013,11 +1060,12 @@ mod tests {
 
         assert_eq!(helper("...\nb\nc\nd\n", "a\nb\nc\n0\ne"), (4, 4));
         assert_eq!(helper("...\nc\nd\n", "a\nb\nc\n0\ne"), (3, 4));
-        assert_eq!(helper("...\nd\n", "a\nb\nc\n0\ne"), (2, 5));
+        assert_eq!(helper("...\nd\n", "a\nb\nc\n0\ne"), (2, 1));
 
-        assert_eq!(helper("a\n..~\nc\nd\ne", "a\nb\nc\nd"), (2, 2));
-        assert_eq!(helper("a\n..~\nc\nd", "a\nb\nc\ne"), (2, 2));
-        assert_eq!(helper("a\n..~\nc\nd", "a\nc\ne\nc\ne"), (2, 2));
+        assert_eq!(helper("a\n..~\nc\nd\ne", "a\nb\nc\nd"), (3, 2));
+        assert_eq!(helper("a\n..~\nc\nd", "a\nb\nc\ne"), (3, 2));
+        assert_eq!(helper("a\n..~\nc\nd", "a\nc\ne\nc\ne"), (3, 2));
+        assert_eq!(helper("a\n..~\nc\nd\n...\nf", "a\ne\nf\nc\nd\ne"), (6, 6));
     }
 
     #[test]
@@ -1148,6 +1196,36 @@ Text (error at line 4):
    |c
 >> |z
    |d
+"
+        );
+
+        assert_eq!(
+            helper(OutputFormatter::SummaryOnly, "a\n", "a\n\nb"),
+            "Pattern (error at line 2):
+   |a
+>>
+
+Text (error at line 3):
+   |a
+   |
+>> |b
+"
+        );
+
+        assert_eq!(
+            helper(OutputFormatter::SummaryOnly, "a\n$1\n$1", "a\nb\nc"),
+            "Pattern (error at line 3):
+   |a
+   |$1
+>> |$1
+
+Names at point of failure:
+  $1: b
+
+Text (error at line 3):
+   |a
+   |b
+>> |c
 "
         );
 
