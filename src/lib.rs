@@ -287,6 +287,8 @@ impl<'a> FMatcher<'a> {
                             None => return Ok(()),
                         }
                     } else if x.trim() == GROUP_ANCHOR_WILDCARD {
+                        ptn_lines_off += 1;
+                        // We now have to perform (bounded) backtracking
                         let ptn_lines_off_orig = ptn_lines_off;
                         let text_lines_off_orig = text_lines_off;
                         ptnl = ptn_lines.next();
@@ -295,8 +297,6 @@ impl<'a> FMatcher<'a> {
                         if ptnl.is_none() {
                             return Ok(());
                         }
-                        // We now have to perform (bounded) backtracking
-                        ptn_lines_off += 1;
                         let mut ptn_lines_sub = ptn_lines.clone();
                         let mut ptnl_sub = ptnl;
                         let mut text_lines_sub = text_lines.clone();
@@ -1013,10 +1013,10 @@ mod tests {
         assert_eq!(helper("...\nc\nd\n", "a\nb\nc\n0\ne"), (3, 4));
         assert_eq!(helper("...\nd\n", "a\nb\nc\n0\ne"), (2, 5));
 
-        assert_eq!(helper("a\n..~\nc\nd\ne", "a\nb\nc\nd"), (2, 2));
-        assert_eq!(helper("a\n..~\nc\nd", "a\nb\nc\ne"), (2, 2));
-        assert_eq!(helper("a\n..~\nc\nd", "a\nc\ne\nc\ne"), (2, 2));
-        assert_eq!(helper("a\n..~\nc\nd\n...\nf", "a\ne\nf\nc\nd\ne"), (5, 6));
+        assert_eq!(helper("a\n..~\nc\nd\ne", "a\nb\nc\nd"), (3, 2));
+        assert_eq!(helper("a\n..~\nc\nd", "a\nb\nc\ne"), (3, 2));
+        assert_eq!(helper("a\n..~\nc\nd", "a\nc\ne\nc\ne"), (3, 2));
+        assert_eq!(helper("a\n..~\nc\nd\n...\nf", "a\ne\nf\nc\nd\ne"), (6, 6));
     }
 
     #[test]
