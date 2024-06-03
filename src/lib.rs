@@ -292,6 +292,10 @@ impl<'a> FMatcher<'a> {
                                         text: text.to_owned(),
                                         ptn_line_off: ptn_lines_off,
                                         text_line_off: text_lines_off_orig,
+                                        names: names
+                                            .iter()
+                                            .map(|(x, y)| (x.to_string(), y.to_string()))
+                                            .collect::<HashMap<_, _>>(),
                                     });
                                 }
                             }
@@ -339,6 +343,10 @@ impl<'a> FMatcher<'a> {
                                                 text: text.to_owned(),
                                                 ptn_line_off: ptn_lines_off_orig,
                                                 text_line_off: text_lines_off_orig,
+                                                names: names
+                                                    .iter()
+                                                    .map(|(x, y)| (x.to_string(), y.to_string()))
+                                                    .collect::<HashMap<_, _>>(),
                                             })
                                         }
                                         (None, _) => return Ok(()),
@@ -351,6 +359,10 @@ impl<'a> FMatcher<'a> {
                                         text: text.to_owned(),
                                         ptn_line_off: ptn_lines_off_orig,
                                         text_line_off: text_lines_off_orig,
+                                        names: names
+                                            .iter()
+                                            .map(|(x, y)| (x.to_string(), y.to_string()))
+                                            .collect::<HashMap<_, _>>(),
                                     });
                                 }
                                 (Some(x), Some(y)) => {
@@ -386,6 +398,10 @@ impl<'a> FMatcher<'a> {
                             text: text.to_owned(),
                             ptn_line_off: ptn_lines_off,
                             text_line_off: text_lines_off,
+                            names: names
+                                .iter()
+                                .map(|(x, y)| (x.to_string(), y.to_string()))
+                                .collect::<HashMap<_, _>>(),
                         });
                     }
                 }
@@ -410,6 +426,10 @@ impl<'a> FMatcher<'a> {
                                     text: text.to_owned(),
                                     ptn_line_off: ptn_lines_off + skipped,
                                     text_line_off: text_lines_off,
+                                    names: names
+                                        .iter()
+                                        .map(|(x, y)| (x.to_string(), y.to_string()))
+                                        .collect::<HashMap<_, _>>(),
                                 });
                             }
                             (None, _) => return Ok(()),
@@ -427,6 +447,10 @@ impl<'a> FMatcher<'a> {
                         text: text.to_owned(),
                         ptn_line_off: ptn_lines_off,
                         text_line_off: text_lines_off + skipped,
+                        names: names
+                            .iter()
+                            .map(|(x, y)| (x.to_string(), y.to_string()))
+                            .collect::<HashMap<_, _>>(),
                     });
                 }
             }
@@ -576,6 +600,7 @@ pub struct FMatchError {
     text: String,
     ptn_line_off: usize,
     text_line_off: usize,
+    names: HashMap<String, String>,
 }
 
 impl FMatchError {
@@ -597,6 +622,7 @@ impl fmt::Display for FMatchError {
                 self.ptn_line_off,
                 &self.text,
                 self.text_line_off,
+                &self.names,
             ),
             OutputFormatter::InputThenSummary => {
                 fmt_raw(f, &self.text)?;
@@ -607,6 +633,7 @@ impl fmt::Display for FMatchError {
                     self.ptn_line_off,
                     &self.text,
                     self.text_line_off,
+                    &self.names,
                 )
             }
             OutputFormatter::InputOnly => fmt_raw(f, &self.text),
@@ -631,6 +658,7 @@ fn fmt_summary(
     ptn_line_off: usize,
     text: &str,
     text_line_off: usize,
+    names: &HashMap<String, String>,
 ) -> fmt::Result {
     // Figure out how many characters are required for the LHS margin.
     let err_mk_chars = ERROR_MARKER.chars().count() + ' '.len_utf8();
@@ -676,6 +704,16 @@ fn fmt_summary(
 
     writeln!(f, "Pattern (error at line {}):", ptn_line_off)?;
     display_lines(f, ptn, ptn_line_off)?;
+    if !names.is_empty() {
+        let mut names = names.iter().collect::<Vec<(_, _)>>();
+        names.sort();
+        let names = names
+            .iter()
+            .map(|(k, v)| format!("{k}: {v}"))
+            .collect::<Vec<_>>()
+            .join("\n  ");
+        writeln!(f, "\nNames at point of failure:\n  {names}")?;
+    }
     writeln!(f, "\nText (error at line {}):", text_line_off)?;
     display_lines(f, text, text_line_off)
 }
@@ -999,7 +1037,7 @@ mod tests {
             (err.ptn_line_off(), err.text_line_off())
         };
 
-        assert_eq!(helper("a\n...\nd", "a\nb\nc"), (3, 3));
+        assert_eq!(helper("a\n...\nd", "a\nb\nc"), (3, 2));
         assert_eq!(helper("a\nb...", "a\nb\nc"), (3, 3));
         assert_eq!(helper("a\n...b...", "a\nxb\nc"), (3, 3));
 
@@ -1158,6 +1196,36 @@ Text (error at line 4):
    |c
 >> |z
    |d
+"
+        );
+
+        assert_eq!(
+            helper(OutputFormatter::SummaryOnly, "a\n", "a\n\nb"),
+            "Pattern (error at line 2):
+   |a
+>>
+
+Text (error at line 3):
+   |a
+   |
+>> |b
+"
+        );
+
+        assert_eq!(
+            helper(OutputFormatter::SummaryOnly, "a\n$1\n$1", "a\nb\nc"),
+            "Pattern (error at line 3):
+   |a
+   |$1
+>> |$1
+
+Names at point of failure:
+  $1: b
+
+Text (error at line 3):
+   |a
+   |b
+>> |c
 "
         );
 
