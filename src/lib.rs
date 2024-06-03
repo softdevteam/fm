@@ -355,7 +355,7 @@ impl<'a> FMatcher<'a> {
                                         // pattern, but advance the text.
                                         ptn_lines_sub = ptn_lines.clone();
                                         ptnl_sub = ptnl;
-                                        ptn_lines_off_sub += 1;
+                                        ptn_lines_off_sub = ptn_lines_off_orig;
                                         textl_sub = text_lines.next();
                                         text_lines_off += 1;
                                         text_lines_sub = text_lines.clone();
@@ -1018,6 +1018,7 @@ mod tests {
         assert_eq!(helper("a\n..~\nc\nd\ne", "a\nb\nc\nd"), (2, 2));
         assert_eq!(helper("a\n..~\nc\nd", "a\nb\nc\ne"), (2, 2));
         assert_eq!(helper("a\n..~\nc\nd", "a\nc\ne\nc\ne"), (2, 2));
+        assert_eq!(helper("a\n..~\nc\nd\n...\nf", "a\ne\nf\nc\nd\ne"), (5, 6));
     }
 
     #[test]
