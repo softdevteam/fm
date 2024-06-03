@@ -269,17 +269,13 @@ impl<'a> FMatcher<'a> {
                                     text_i += 1;
                                 }
                                 if !succ {
-                                    return Err(FMatchError {
-                                        output_formatter: self.options.output_formatter,
-                                        ptn: self.orig_ptn.to_owned(),
-                                        text: text.to_owned(),
-                                        ptn_line_off: self.ptn_lines_off + ptn_i,
-                                        text_line_off: text_lines_off + text_i_orig,
-                                        names: names
-                                            .iter()
-                                            .map(|(x, y)| (x.to_string(), y.to_string()))
-                                            .collect::<HashMap<_, _>>(),
-                                    });
+                                    return Err(self.fmatch_err(
+                                        ptn_i,
+                                        text,
+                                        text_lines_off,
+                                        text_i_orig,
+                                        names,
+                                    ));
                                 }
                             }
                             None => return Ok(()),
@@ -301,17 +297,13 @@ impl<'a> FMatcher<'a> {
                             match (self.ptn_lines.get(ptn_i), text_lines.get(text_i)) {
                                 (None, None) => return Ok(()),
                                 (None, Some(_)) => {
-                                    return Err(FMatchError {
-                                        output_formatter: self.options.output_formatter,
-                                        ptn: self.orig_ptn.to_owned(),
-                                        text: text.to_owned(),
-                                        ptn_line_off: self.ptn_lines_off + ptn_i_orig,
-                                        text_line_off: text_lines_off + text_i_orig,
-                                        names: names
-                                            .iter()
-                                            .map(|(x, y)| (x.to_string(), y.to_string()))
-                                            .collect::<HashMap<_, _>>(),
-                                    })
+                                    return Err(self.fmatch_err(
+                                        ptn_i_orig,
+                                        text,
+                                        text_lines_off,
+                                        text_i_orig,
+                                        names,
+                                    ));
                                 }
                                 (Some(x), _)
                                     if *x == GROUP_ANCHOR_WILDCARD
@@ -321,17 +313,13 @@ impl<'a> FMatcher<'a> {
                                     break;
                                 }
                                 (Some(_), None) => {
-                                    return Err(FMatchError {
-                                        output_formatter: self.options.output_formatter,
-                                        ptn: self.orig_ptn.to_owned(),
-                                        text: text.to_owned(),
-                                        ptn_line_off: self.ptn_lines_off + ptn_i_orig,
-                                        text_line_off: text_lines_off + text_i_orig,
-                                        names: names
-                                            .iter()
-                                            .map(|(x, y)| (x.to_string(), y.to_string()))
-                                            .collect::<HashMap<_, _>>(),
-                                    });
+                                    return Err(self.fmatch_err(
+                                        ptn_i_orig,
+                                        text,
+                                        text_lines_off,
+                                        text_i_orig,
+                                        names,
+                                    ));
                                 }
                                 (Some(x), Some(y)) => {
                                     if self.match_line(&mut names, x, y) {
@@ -352,17 +340,7 @@ impl<'a> FMatcher<'a> {
                         ptn_i += 1;
                         text_i += 1;
                     } else {
-                        return Err(FMatchError {
-                            output_formatter: self.options.output_formatter,
-                            ptn: self.orig_ptn.to_owned(),
-                            text: text.to_owned(),
-                            ptn_line_off: self.ptn_lines_off + ptn_i,
-                            text_line_off: text_lines_off + text_i,
-                            names: names
-                                .iter()
-                                .map(|(x, y)| (x.to_string(), y.to_string()))
-                                .collect::<HashMap<_, _>>(),
-                        });
+                        return Err(self.fmatch_err(ptn_i, text, text_lines_off, text_i, names));
                     }
                 }
                 (None, None) => return Ok(()),
@@ -377,31 +355,11 @@ impl<'a> FMatcher<'a> {
                             return Ok(());
                         }
                     } else {
-                        return Err(FMatchError {
-                            output_formatter: self.options.output_formatter,
-                            ptn: self.orig_ptn.to_owned(),
-                            text: text.to_owned(),
-                            ptn_line_off: self.ptn_lines_off + ptn_i,
-                            text_line_off: text_lines_off + text_i,
-                            names: names
-                                .iter()
-                                .map(|(x, y)| (x.to_string(), y.to_string()))
-                                .collect::<HashMap<_, _>>(),
-                        });
+                        return Err(self.fmatch_err(ptn_i, text, text_lines_off, text_i, names));
                     }
                 }
                 (None, Some(_)) => {
-                    return Err(FMatchError {
-                        output_formatter: self.options.output_formatter,
-                        ptn: self.orig_ptn.to_owned(),
-                        text: text.to_owned(),
-                        ptn_line_off: self.ptn_lines_off + ptn_i,
-                        text_line_off: text_lines_off + text_i,
-                        names: names
-                            .iter()
-                            .map(|(x, y)| (x.to_string(), y.to_string()))
-                            .collect::<HashMap<_, _>>(),
-                    });
+                    return Err(self.fmatch_err(ptn_i, text, text_lines_off, text_i, names));
                 }
             }
         }
@@ -493,6 +451,27 @@ impl<'a> FMatcher<'a> {
             } else {
                 false
             }
+        }
+    }
+
+    fn fmatch_err(
+        &self,
+        ptn_i: usize,
+        text: &str,
+        text_lines_off: usize,
+        text_i: usize,
+        names: HashMap<&'a str, &'a str>,
+    ) -> FMatchError {
+        FMatchError {
+            output_formatter: self.options.output_formatter,
+            ptn: self.orig_ptn.to_owned(),
+            text: text.to_owned(),
+            ptn_line_off: self.ptn_lines_off + ptn_i,
+            text_line_off: text_lines_off + text_i,
+            names: names
+                .iter()
+                .map(|(x, y)| (x.to_string(), y.to_string()))
+                .collect::<HashMap<_, _>>(),
         }
     }
 }
