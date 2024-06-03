@@ -271,18 +271,29 @@ impl<'a> FMatcher<'a> {
             match (ptnl, textl) {
                 (Some(x), Some(y)) => {
                     if x.trim() == LINE_ANCHOR_WILDCARD {
+                        let text_lines_off_orig = text_lines_off;
                         ptnl = ptn_lines.next();
                         ptn_lines_off += 1;
                         match ptnl {
                             Some(x) => {
+                                let mut succ = false;
                                 while let Some(y) = textl {
-                                    text_lines_off += 1;
                                     if self.match_line(&mut names, x, y) {
+                                        succ = true;
                                         break;
                                     }
+                                    text_lines_off += 1;
                                     textl = text_lines.next();
                                 }
-                                text_lines_off -= 1;
+                                if !succ {
+                                    return Err(FMatchError {
+                                        output_formatter: self.options.output_formatter,
+                                        ptn: self.ptn.to_owned(),
+                                        text: text.to_owned(),
+                                        ptn_line_off: ptn_lines_off,
+                                        text_line_off: text_lines_off_orig,
+                                    });
+                                }
                             }
                             None => return Ok(()),
                         }
@@ -1011,7 +1022,7 @@ mod tests {
 
         assert_eq!(helper("...\nb\nc\nd\n", "a\nb\nc\n0\ne"), (4, 4));
         assert_eq!(helper("...\nc\nd\n", "a\nb\nc\n0\ne"), (3, 4));
-        assert_eq!(helper("...\nd\n", "a\nb\nc\n0\ne"), (2, 5));
+        assert_eq!(helper("...\nd\n", "a\nb\nc\n0\ne"), (2, 1));
 
         assert_eq!(helper("a\n..~\nc\nd\ne", "a\nb\nc\nd"), (3, 2));
         assert_eq!(helper("a\n..~\nc\nd", "a\nb\nc\ne"), (3, 2));
