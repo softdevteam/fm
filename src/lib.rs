@@ -6,7 +6,6 @@ use std::{
     default::Default,
     error::Error,
     fmt,
-    str::Lines,
 };
 
 use regex::Regex;
@@ -22,9 +21,7 @@ struct FMOptions {
     output_formatter: OutputFormatter,
     name_matchers: Vec<(Regex, Regex, bool)>,
     distinct_name_matching: bool,
-    ignore_leading_whitespace: bool,
-    ignore_trailing_whitespace: bool,
-    ignore_surrounding_blank_lines: bool,
+    trim_whitespace: bool,
 }
 
 impl Default for FMOptions {
@@ -33,9 +30,7 @@ impl Default for FMOptions {
             output_formatter: OutputFormatter::InputThenSummary,
             name_matchers: Vec::new(),
             distinct_name_matching: false,
-            ignore_leading_whitespace: true,
-            ignore_trailing_whitespace: true,
-            ignore_surrounding_blank_lines: true,
+            trim_whitespace: true,
         }
     }
 }
@@ -185,32 +180,23 @@ impl<'a> FMBuilder<'a> {
         self
     }
 
-    /// If `yes`, then each line's leading whitespace will be ignored in both pattern and text;
-    /// otherwise leading whitespace must match. Defaults to `true`.
-    pub fn ignore_leading_whitespace(mut self, yes: bool) -> Self {
-        self.options.ignore_leading_whitespace = yes;
-        self
-    }
-
-    /// If `yes`, then each line's trailing whitespace will be ignored in both pattern and text;
-    /// otherwise trailing whitespace must match. Defaults to `true`.
-    pub fn ignore_trailing_whitespace(mut self, yes: bool) -> Self {
-        self.options.ignore_trailing_whitespace = yes;
-        self
-    }
-
-    /// If `yes`, blank lines at the start and end of both the pattern and text are ignored for
-    /// matching purposes. Defaults to `true`.
-    pub fn ignore_surrounding_blank_lines(mut self, yes: bool) -> Self {
-        self.options.ignore_surrounding_blank_lines = yes;
+    /// If `yes`, then:
+    ///   1. Blank lines at the start/end of the pattern and text are ignored.
+    ///   2. Leading/trailing whitespace is ignored on each line of the pattern and text.
+    /// Defaults to "yes".
+    pub fn trim_whitespace(mut self, yes: bool) -> Self {
+        self.options.trim_whitespace = yes;
         self
     }
 
     /// Turn this `FMBuilder` into a `FMatcher`.
     pub fn build(self) -> Result<FMatcher<'a>, Box<dyn Error>> {
         self.validate()?;
+        let (ptn_lines, ptn_lines_off) = line_trimmer(self.options.trim_whitespace, self.ptn);
         Ok(FMatcher {
-            ptn: self.ptn,
+            orig_ptn: self.ptn,
+            ptn_lines,
+            ptn_lines_off,
             options: self.options,
         })
     }
@@ -248,7 +234,9 @@ impl<'a> FMBuilder<'a> {
 /// The fuzzy matcher.
 #[derive(Debug)]
 pub struct FMatcher<'a> {
-    ptn: &'a str,
+    orig_ptn: &'a str,
+    ptn_lines: Vec<&'a str>,
+    ptn_lines_off: usize,
     options: FMOptions,
 }
 
@@ -261,37 +249,32 @@ impl<'a> FMatcher<'a> {
     /// Does this fuzzy matcher match `text`?
     pub fn matches(&self, text: &str) -> Result<(), FMatchError> {
         let mut names = HashMap::new();
-        let mut ptn_lines = self.ptn.lines();
-        let (mut ptnl, mut ptn_lines_off) = self.skip_blank_lines(&mut ptn_lines, None);
-        ptn_lines_off += 1;
-        let mut text_lines = text.lines();
-        let (mut textl, mut text_lines_off) = self.skip_blank_lines(&mut text_lines, None);
-        text_lines_off += 1;
+        let mut ptn_i = 0;
+        let (text_lines, text_lines_off) = line_trimmer(self.options.trim_whitespace, text);
+        let mut text_i = 0;
         loop {
-            match (ptnl, textl) {
+            match (self.ptn_lines.get(ptn_i), text_lines.get(text_i)) {
                 (Some(x), Some(y)) => {
                     if x.trim() == LINE_ANCHOR_WILDCARD {
-                        let text_lines_off_orig = text_lines_off;
-                        ptnl = ptn_lines.next();
-                        ptn_lines_off += 1;
-                        match ptnl {
+                        let text_i_orig = text_i;
+                        ptn_i += 1;
+                        match self.ptn_lines.get(ptn_i) {
                             Some(x) => {
                                 let mut succ = false;
-                                while let Some(y) = textl {
+                                while let Some(y) = text_lines.get(text_i) {
                                     if self.match_line(&mut names, x, y) {
                                         succ = true;
                                         break;
                                     }
-                                    text_lines_off += 1;
-                                    textl = text_lines.next();
+                                    text_i += 1;
                                 }
                                 if !succ {
                                     return Err(FMatchError {
                                         output_formatter: self.options.output_formatter,
-                                        ptn: self.ptn.to_owned(),
+                                        ptn: self.orig_ptn.to_owned(),
                                         text: text.to_owned(),
-                                        ptn_line_off: ptn_lines_off,
-                                        text_line_off: text_lines_off_orig,
+                                        ptn_line_off: self.ptn_lines_off + ptn_i,
+                                        text_line_off: text_lines_off + text_i_orig,
                                         names: names
                                             .iter()
                                             .map(|(x, y)| (x.to_string(), y.to_string()))
@@ -302,63 +285,48 @@ impl<'a> FMatcher<'a> {
                             None => return Ok(()),
                         }
                     } else if x.trim() == GROUP_ANCHOR_WILDCARD {
-                        ptn_lines_off += 1;
-                        // We now have to perform (bounded) backtracking
-                        let ptn_lines_off_orig = ptn_lines_off;
-                        let text_lines_off_orig = text_lines_off;
-                        ptnl = ptn_lines.next();
+                        ptn_i += 1;
                         // If the interline wildcard is the last part of the pattern, then we
                         // implicitly match any remaining text: i.e. we're done!
-                        if ptnl.is_none() {
+                        if ptn_i == self.ptn_lines.len() {
                             return Ok(());
                         }
-                        let mut ptn_lines_sub = ptn_lines.clone();
-                        let mut ptnl_sub = ptnl;
-                        let mut text_lines_sub = text_lines.clone();
-                        let mut text_lines_off_sub = text_lines_off;
-                        let mut textl_sub = textl;
-                        let mut names_sub = names.clone();
+                        // We now have to perform (bounded) backtracking
+                        let ptn_i_orig = ptn_i;
+                        let text_i_orig = text_i;
+                        let mut text_i_st = text_i;
+                        let names_orig = names;
+                        names = names_orig.clone();
                         loop {
-                            match (ptnl_sub, textl_sub) {
+                            match (self.ptn_lines.get(ptn_i), text_lines.get(text_i)) {
                                 (None, None) => return Ok(()),
+                                (None, Some(_)) => {
+                                    return Err(FMatchError {
+                                        output_formatter: self.options.output_formatter,
+                                        ptn: self.orig_ptn.to_owned(),
+                                        text: text.to_owned(),
+                                        ptn_line_off: self.ptn_lines_off + ptn_i_orig,
+                                        text_line_off: text_lines_off + text_i_orig,
+                                        names: names
+                                            .iter()
+                                            .map(|(x, y)| (x.to_string(), y.to_string()))
+                                            .collect::<HashMap<_, _>>(),
+                                    })
+                                }
                                 (Some(x), _)
-                                    if x.trim() == GROUP_ANCHOR_WILDCARD
-                                        || x.trim() == LINE_ANCHOR_WILDCARD =>
+                                    if *x == GROUP_ANCHOR_WILDCARD
+                                        || *x == LINE_ANCHOR_WILDCARD =>
                                 {
                                     // We've matched everything successfully
-                                    ptn_lines = ptn_lines_sub;
-                                    ptnl = ptnl_sub;
-                                    text_lines = text_lines_sub;
-                                    textl = textl_sub;
-                                    text_lines_off = text_lines_off_sub;
-                                    names = names_sub;
                                     break;
-                                }
-                                (None, Some(_)) => {
-                                    match self.skip_blank_lines(&mut text_lines_sub, textl_sub) {
-                                        (Some(_), _) => {
-                                            return Err(FMatchError {
-                                                output_formatter: self.options.output_formatter,
-                                                ptn: self.ptn.to_owned(),
-                                                text: text.to_owned(),
-                                                ptn_line_off: ptn_lines_off_orig,
-                                                text_line_off: text_lines_off_orig,
-                                                names: names
-                                                    .iter()
-                                                    .map(|(x, y)| (x.to_string(), y.to_string()))
-                                                    .collect::<HashMap<_, _>>(),
-                                            })
-                                        }
-                                        (None, _) => return Ok(()),
-                                    }
                                 }
                                 (Some(_), None) => {
                                     return Err(FMatchError {
                                         output_formatter: self.options.output_formatter,
-                                        ptn: self.ptn.to_owned(),
+                                        ptn: self.orig_ptn.to_owned(),
                                         text: text.to_owned(),
-                                        ptn_line_off: ptn_lines_off_orig,
-                                        text_line_off: text_lines_off_orig,
+                                        ptn_line_off: self.ptn_lines_off + ptn_i_orig,
+                                        text_line_off: text_lines_off + text_i_orig,
                                         names: names
                                             .iter()
                                             .map(|(x, y)| (x.to_string(), y.to_string()))
@@ -366,38 +334,30 @@ impl<'a> FMatcher<'a> {
                                     });
                                 }
                                 (Some(x), Some(y)) => {
-                                    if self.match_line(&mut names_sub, x, y) {
-                                        ptnl_sub = ptn_lines_sub.next();
-                                        ptn_lines_off += 1;
-                                        textl_sub = text_lines_sub.next();
-                                        text_lines_off_sub += 1;
+                                    if self.match_line(&mut names, x, y) {
+                                        ptn_i += 1;
+                                        text_i += 1;
                                     } else {
                                         // We failed to match, so we need to reset the
                                         // pattern, but advance the text.
-                                        ptn_lines_sub = ptn_lines.clone();
-                                        ptnl_sub = ptnl;
-                                        ptn_lines_off = ptn_lines_off_orig;
-                                        textl_sub = text_lines.next();
-                                        text_lines_off += 1;
-                                        text_lines_sub = text_lines.clone();
-                                        text_lines_off_sub = text_lines_off;
-                                        names_sub = names.clone();
+                                        ptn_i = ptn_i_orig;
+                                        text_i_st += 1;
+                                        text_i = text_i_st;
+                                        names = names_orig.clone();
                                     }
                                 }
                             }
                         }
                     } else if self.match_line(&mut names, x, y) {
-                        ptnl = ptn_lines.next();
-                        ptn_lines_off += 1;
-                        textl = text_lines.next();
-                        text_lines_off += 1;
+                        ptn_i += 1;
+                        text_i += 1;
                     } else {
                         return Err(FMatchError {
                             output_formatter: self.options.output_formatter,
-                            ptn: self.ptn.to_owned(),
+                            ptn: self.orig_ptn.to_owned(),
                             text: text.to_owned(),
-                            ptn_line_off: ptn_lines_off,
-                            text_line_off: text_lines_off,
+                            ptn_line_off: self.ptn_lines_off + ptn_i,
+                            text_line_off: text_lines_off + text_i,
                             names: names
                                 .iter()
                                 .map(|(x, y)| (x.to_string(), y.to_string()))
@@ -408,45 +368,35 @@ impl<'a> FMatcher<'a> {
                 (None, None) => return Ok(()),
                 (Some(x), None) => {
                     if let LINE_ANCHOR_WILDCARD | GROUP_ANCHOR_WILDCARD = x.trim() {
-                        ptnl = ptn_lines.next();
-                        ptn_lines_off += 1;
+                        ptn_i += 1;
                         // If the interline wildcard is the last line in the pattern, we're done.
                         // If it isn't, then the pattern hasn't matched: rather than explicitly
                         // throw an error in this clause, we let the next iteration of the outer
                         // while loop catch this case.
-                        if ptnl.is_none() {
+                        if ptn_i == self.ptn_lines.len() {
                             return Ok(());
                         }
                     } else {
-                        match self.skip_blank_lines(&mut ptn_lines, Some(x)) {
-                            (Some(_), skipped) => {
-                                return Err(FMatchError {
-                                    output_formatter: self.options.output_formatter,
-                                    ptn: self.ptn.to_owned(),
-                                    text: text.to_owned(),
-                                    ptn_line_off: ptn_lines_off + skipped,
-                                    text_line_off: text_lines_off,
-                                    names: names
-                                        .iter()
-                                        .map(|(x, y)| (x.to_string(), y.to_string()))
-                                        .collect::<HashMap<_, _>>(),
-                                });
-                            }
-                            (None, _) => return Ok(()),
-                        }
+                        return Err(FMatchError {
+                            output_formatter: self.options.output_formatter,
+                            ptn: self.orig_ptn.to_owned(),
+                            text: text.to_owned(),
+                            ptn_line_off: self.ptn_lines_off + ptn_i,
+                            text_line_off: text_lines_off + text_i,
+                            names: names
+                                .iter()
+                                .map(|(x, y)| (x.to_string(), y.to_string()))
+                                .collect::<HashMap<_, _>>(),
+                        });
                     }
                 }
-                (None, Some(x)) => {
-                    let (x, skipped) = self.skip_blank_lines(&mut text_lines, Some(x));
-                    if x.is_none() {
-                        return Ok(());
-                    }
+                (None, Some(_)) => {
                     return Err(FMatchError {
                         output_formatter: self.options.output_formatter,
-                        ptn: self.ptn.to_owned(),
+                        ptn: self.orig_ptn.to_owned(),
                         text: text.to_owned(),
-                        ptn_line_off: ptn_lines_off,
-                        text_line_off: text_lines_off + skipped,
+                        ptn_line_off: self.ptn_lines_off + ptn_i,
+                        text_line_off: text_lines_off + text_i,
                         names: names
                             .iter()
                             .map(|(x, y)| (x.to_string(), y.to_string()))
@@ -457,59 +407,14 @@ impl<'a> FMatcher<'a> {
         }
     }
 
-    /// Skip blank lines in the input if `options.ignore_surrounding_blank_lines` is set. If `line`
-    /// is `Some(...)` that is taken as the first line of the input and after that is processesd
-    /// the `lines` iterator is used. The contents of the first non-blank line are returned as well
-    /// as the number of lines skipped. Notice that this is intended *only* to skip blank lines at
-    /// the start and end of a string, as it is predicated on the `ignore_surrounding_blank_lines`
-    /// option (i.e. don't use this to skip blank lines in the middle of the input, because that
-    /// will fail if the user sets `ignore_surrounding_blank_lines` to `false`!).
-    #[allow(clippy::while_let_on_iterator)]
-    fn skip_blank_lines(
-        &self,
-        lines: &mut Lines<'a>,
-        line: Option<&'a str>,
-    ) -> (Option<&'a str>, usize) {
-        if !self.options.ignore_surrounding_blank_lines {
-            if line.is_some() {
-                return (line, 0);
-            }
-            return (lines.next(), 0);
-        }
-        let mut trimmed = 0;
-        if let Some(l) = line {
-            if !l.trim().is_empty() {
-                return (Some(l), 0);
-            }
-            trimmed += 1;
-        }
-        while let Some(l) = lines.next() {
-            if !l.trim().is_empty() {
-                return (Some(l), trimmed);
-            }
-            trimmed += 1;
-        }
-        (None, trimmed)
-    }
-
     /// Try matching `ptn` against `text`. If, and only if, the match is successful, `names` will
     /// be updated with matched names.
     fn match_line<'b>(
         &self,
         names: &mut HashMap<&'a str, &'b str>,
-        mut ptn: &'a str,
-        mut text: &'b str,
+        ptn: &'a str,
+        text: &'b str,
     ) -> bool {
-        if self.options.ignore_leading_whitespace {
-            ptn = ptn.trim_start();
-            text = text.trim_start();
-        }
-
-        if self.options.ignore_trailing_whitespace {
-            ptn = ptn.trim_end();
-            text = text.trim_end();
-        }
-
         let sww = ptn.starts_with(INTRALINE_WILDCARD);
         let eww = ptn.ends_with(INTRALINE_WILDCARD);
         if sww && eww {
@@ -732,10 +637,49 @@ impl Error for FMatchError {
     }
 }
 
+/// Return `s` split into lines and the number of leading lines (+1 to allow for human-readable
+/// errors!) skipped.
+///
+/// If `trim` is set to true:
+///   1. Leading/trailing blank space within lines is trimmed.
+///   2. Leading/trailing blank lines (including blank space) are trimmed.
+fn line_trimmer<'a>(trim: bool, s: &'a str) -> (Vec<&'a str>, usize) {
+    let mut lines = s.lines().collect::<Vec<_>>();
+    if !trim {
+        return (lines, 1);
+    }
+    let mut st = 0;
+    while st < lines.len() && lines[st].trim().is_empty() {
+        st += 1;
+    }
+    let mut en = lines.len();
+    while en > 0 && lines[en - 1].trim().is_empty() {
+        en -= 1;
+    }
+    if en < st {
+        en = st;
+    }
+    (
+        lines.drain(st..en).map(|x| x.trim()).collect::<Vec<_>>(),
+        st + 1,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use proptest::proptest;
+
+    #[test]
+    fn line_trimming() {
+        assert_eq!(line_trimmer(true, ""), (vec![], 1));
+        assert_eq!(line_trimmer(true, "\n"), (vec![], 2));
+        assert_eq!(line_trimmer(true, "\na"), (vec!["a"], 2));
+        assert_eq!(line_trimmer(true, "\na\n"), (vec!["a"], 2));
+        assert_eq!(line_trimmer(true, "\na\nb\n"), (vec!["a", "b"], 2));
+        assert_eq!(line_trimmer(true, "\n a\nb \n"), (vec!["a", "b"], 2));
+        assert_eq!(line_trimmer(true, "\n a\n\nb \n"), (vec!["a", "", "b"], 2));
+    }
 
     #[test]
     fn defaults() {
@@ -812,11 +756,11 @@ mod tests {
     }
 
     #[test]
-    fn dont_ignore_surrounding_blank_lines() {
+    fn dont_trim_whitespace() {
         fn helper(ptn: &str, text: &str) -> bool {
             FMBuilder::new(ptn)
                 .unwrap()
-                .ignore_surrounding_blank_lines(false)
+                .trim_whitespace(false)
                 .build()
                 .unwrap()
                 .matches(text)
@@ -833,6 +777,16 @@ mod tests {
         assert!(!helper("a", "a\n\n"));
         assert!(!helper("a\n\nb", "a\n"));
         assert!(!helper("a\n", "a\n\nb"));
+
+        assert!(helper("a\na", "a\na"));
+
+        assert!(helper("a\n a", "a\n a"));
+        assert!(!helper("a\n a", "a\na"));
+        assert!(!helper("a\na", "a\n a"));
+
+        assert!(helper("a\na ", "a\na "));
+        assert!(!helper("a\na", "a\na "));
+        assert!(!helper("a\na ", "a\na"));
     }
 
     #[test]
@@ -1041,8 +995,8 @@ mod tests {
         assert_eq!(helper("a\nb...", "a\nb\nc"), (3, 3));
         assert_eq!(helper("a\n...b...", "a\nxb\nc"), (3, 3));
 
-        assert_eq!(helper("a\n\nb", "a\n"), (3, 2));
-        assert_eq!(helper("a\n", "a\n\nb"), (2, 3));
+        assert_eq!(helper("a\n\nb", "a\n"), (2, 2));
+        assert_eq!(helper("a\n", "a\n\nb"), (2, 2));
 
         assert_eq!(helper("$1", ""), (1, 1));
         assert_eq!(helper("$1, $1", "a, b"), (1, 1));
@@ -1205,10 +1159,10 @@ Text (error at line 4):
    |a
 >>
 
-Text (error at line 3):
+Text (error at line 2):
    |a
-   |
->> |b
+>> |
+   |b
 "
         );
 
@@ -1226,19 +1180,6 @@ Text (error at line 3):
    |a
    |b
 >> |c
-"
-        );
-
-        assert_eq!(
-            helper(OutputFormatter::SummaryOnly, "a\n", "a\n\nb"),
-            "Pattern (error at line 2):
-   |a
->>
-
-Text (error at line 3):
-   |a
-   |
->> |b
 "
         );
 
@@ -1328,30 +1269,6 @@ Text (error at line 5):
    |10
 "
         );
-    }
-
-    #[test]
-    fn test_allow_whitespace() {
-        let helper = |ptn: &str, text: &str| -> bool {
-            FMBuilder::new(ptn)
-                .unwrap()
-                .ignore_leading_whitespace(false)
-                .ignore_trailing_whitespace(false)
-                .build()
-                .unwrap()
-                .matches(text)
-                .is_ok()
-        };
-
-        assert!(helper("a\na", "a\na"));
-
-        assert!(helper("a\n a", "a\n a"));
-        assert!(!helper("a\n a", "a\na"));
-        assert!(!helper("a\na", "a\n a"));
-
-        assert!(helper("a\na ", "a\na "));
-        assert!(!helper("a\na", "a\na "));
-        assert!(!helper("a\na ", "a\na"));
     }
 
     proptest! {
