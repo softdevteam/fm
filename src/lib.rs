@@ -299,7 +299,6 @@ impl<'a> FMatcher<'a> {
                         ptn_lines_off += 1;
                         let mut ptn_lines_sub = ptn_lines.clone();
                         let mut ptnl_sub = ptnl;
-                        let mut ptn_lines_off_sub = ptn_lines_off;
                         let mut text_lines_sub = text_lines.clone();
                         let mut text_lines_off_sub = text_lines_off;
                         let mut textl_sub = textl;
@@ -314,7 +313,6 @@ impl<'a> FMatcher<'a> {
                                     // We've matched everything successfully
                                     ptn_lines = ptn_lines_sub;
                                     ptnl = ptnl_sub;
-                                    ptn_lines_off = ptn_lines_off_sub;
                                     text_lines = text_lines_sub;
                                     textl = textl_sub;
                                     text_lines_off = text_lines_off_sub;
@@ -347,7 +345,7 @@ impl<'a> FMatcher<'a> {
                                 (Some(x), Some(y)) => {
                                     if self.match_line(&mut names_sub, x, y) {
                                         ptnl_sub = ptn_lines_sub.next();
-                                        ptn_lines_off_sub += 1;
+                                        ptn_lines_off += 1;
                                         textl_sub = text_lines_sub.next();
                                         text_lines_off_sub += 1;
                                     } else {
@@ -355,7 +353,7 @@ impl<'a> FMatcher<'a> {
                                         // pattern, but advance the text.
                                         ptn_lines_sub = ptn_lines.clone();
                                         ptnl_sub = ptnl;
-                                        ptn_lines_off_sub = ptn_lines_off_orig;
+                                        ptn_lines_off = ptn_lines_off_orig;
                                         textl_sub = text_lines.next();
                                         text_lines_off += 1;
                                         text_lines_sub = text_lines.clone();
