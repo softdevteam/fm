@@ -1,11 +1,16 @@
 #![doc = include_str!("../README.md")]
 #![allow(clippy::upper_case_acronyms)]
+#![allow(clippy::type_complexity)]
 
 use std::{
-    collections::hash_map::{Entry, HashMap},
+    collections::{
+        hash_map::{Entry, HashMap},
+        HashSet,
+    },
     default::Default,
     error::Error,
     fmt,
+    panic::UnwindSafe,
 };
 
 use regex::Regex;
@@ -16,11 +21,10 @@ const GROUP_ANCHOR_WILDCARD: &str = "..~";
 const INTRALINE_WILDCARD: &str = "...";
 const ERROR_MARKER: &str = ">>";
 
-#[derive(Debug)]
 struct FMOptions {
     output_formatter: OutputFormatter,
     name_matchers: Vec<(Regex, Regex, bool)>,
-    distinct_name_matching: bool,
+    name_matching_validators: Vec<Box<dyn Fn(&HashMap<&str, &str>) -> bool + UnwindSafe>>,
     trim_whitespace: bool,
 }
 
@@ -29,9 +33,15 @@ impl Default for FMOptions {
         FMOptions {
             output_formatter: OutputFormatter::InputThenSummary,
             name_matchers: Vec::new(),
-            distinct_name_matching: false,
+            name_matching_validators: Vec::new(),
             trim_whitespace: true,
         }
+    }
+}
+
+impl fmt::Debug for FMOptions {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "FMOptions {{ .. }}")
     }
 }
 
@@ -164,8 +174,7 @@ impl<'a> FMBuilder<'a> {
     /// ```
     ///
     /// As this shows, once `$1` has matched "a", all further instances of `$1` must also match
-    /// "a", but `_` can match different values at different points. This is true even if distinct
-    /// name matching (see [Self::distinct_name_matching] is enabled.
+    /// "a", but `_` can match different values at different points.
     pub fn name_matcher_ignore(mut self, ptn_re: Regex, text_re: Regex) -> Self {
         self.options.name_matchers.push((ptn_re, text_re, true));
         self
@@ -175,8 +184,62 @@ impl<'a> FMBuilder<'a> {
     /// to `a` then `$2` will refuse to match against `a` (though `$1` will continue to match
     /// against only `a`). Note that ignorable name matches (see [Self::name_matcher_ignore]) are
     /// never subject to distinct name matching. Defaults to `false`.
-    pub fn distinct_name_matching(mut self, yes: bool) -> Self {
-        self.options.distinct_name_matching = yes;
+    ///
+    /// # Warning
+    ///
+    /// If you call this function with `true` then later with `false`, the latter will not take
+    /// effect.
+    #[deprecated(since = "0.3.1", note = "Please use name_matching_validator instead")]
+    pub fn distinct_name_matching(self, yes: bool) -> Self {
+        if yes {
+            self.name_matching_validator(|names| {
+                names.values().collect::<HashSet<_>>().len() == names.len()
+            })
+        } else {
+            self
+        }
+    }
+
+    /// Add a name matching validator: this takes a [HashMap] of `(key, value)` pairs and must
+    /// return `true` if this is a valid set of pairs or false otherwise. Name matching validators
+    /// allow you to customise what names are valid matches. For example, if you want distinct
+    /// names to match distinct values you can add a name matching validator which converts values
+    /// to a [HashSet] and fails if the resulting set has fewer entries than the input hashmap:
+    ///
+    /// ```rust
+    /// use {fm::FMBuilder, regex::Regex};
+    /// use std::collections::HashSet;
+    ///
+    /// let ptn_re = Regex::new(r"\$[0-9]+?\b").unwrap();
+    /// let text_re = Regex::new(r"[a-b]+?\b").unwrap();
+    /// let matcher = FMBuilder::new("$1 $2")
+    ///                         .unwrap()
+    ///                         .name_matcher(ptn_re, text_re)
+    ///                         .name_matching_validator(|names| {
+    ///                             names.values().collect::<HashSet<_>>().len() == names.len()
+    ///                         })
+    ///                         .build()
+    ///                         .unwrap();
+    /// assert!(matcher.matches("a b").is_ok());
+    /// assert!(matcher.matches("a a").is_err());
+    /// ```
+    ///
+    /// As this shows, since `$1` matches `a`, the name matching validator returns false if `$2`
+    /// also matches `a`.
+    ///
+    /// Note that name matching validators must not confuse "doesn't match" with "is an error":
+    /// just because text doesn't match at a given point does not mean there is an error.
+    ///
+    /// Name matching validators are called frequently, so their performance can be an issue if you
+    /// have large inputs. You may need to benchmark carefully.
+    ///
+    /// Multiple name matching validators are allowed: they are matched in the order they were
+    /// added to `FMBuilder`.
+    pub fn name_matching_validator<F>(mut self, f: F) -> Self
+    where
+        F: Fn(&HashMap<&str, &str>) -> bool + UnwindSafe + 'static,
+    {
+        self.options.name_matching_validators.push(Box::new(f));
         self
     }
 
@@ -191,6 +254,11 @@ impl<'a> FMBuilder<'a> {
 
     /// Turn this `FMBuilder` into a `FMatcher`.
     pub fn build(self) -> Result<FMatcher<'a>, Box<dyn Error>> {
+        if !self.options.name_matching_validators.is_empty()
+            && self.options.name_matchers.is_empty()
+        {
+            return Err("If a name matching validator(s) is/are specified, one or more name matchers must also be specified".into());
+        }
         self.validate()?;
         let (ptn_lines, ptn_lines_off) = line_trimmer(self.options.trim_whitespace, self.ptn);
         Ok(FMatcher {
@@ -406,13 +474,6 @@ impl<'a> FMatcher<'a> {
                                     panic!("Text pattern matched the empty string.");
                                 }
                                 if !ignore {
-                                    if self.options.distinct_name_matching {
-                                        for (x, y) in names.iter().chain(new_names.iter()) {
-                                            if *x != key && *y == val {
-                                                return false;
-                                            }
-                                        }
-                                    }
                                     match names.entry(key) {
                                         Entry::Occupied(e) => {
                                             if *e.get() != val {
@@ -429,6 +490,16 @@ impl<'a> FMatcher<'a> {
                                                 e.insert(val);
                                             }
                                         },
+                                    }
+
+                                    if !self.options.name_matching_validators.is_empty() {
+                                        let mut all_names = names.clone();
+                                        all_names.extend(&new_names);
+                                        for nmv in &self.options.name_matching_validators {
+                                            if !nmv(&all_names) {
+                                                return false;
+                                            }
+                                        }
                                     }
                                 }
                                 ptn_i += ptnm.len();
@@ -648,6 +719,7 @@ fn line_trimmer<'a>(trim: bool, s: &'a str) -> (Vec<&'a str>, usize) {
 mod tests {
     use super::*;
     use proptest::proptest;
+    use std::collections::HashSet;
 
     #[test]
     fn line_trimming() {
@@ -940,7 +1012,10 @@ mod tests {
         let helper = |ptn: &str, text: &str| -> bool {
             FMBuilder::new(ptn)
                 .unwrap()
-                .distinct_name_matching(true)
+                .name_matching_validator(|names| {
+                    let vals = names.values().collect::<HashSet<_>>();
+                    vals.len() == names.len()
+                })
                 .name_matcher_ignore(nameptn_ignore_re.clone(), name_re.clone())
                 .name_matcher(nameptn_normal_re.clone(), name_re.clone())
                 .build()
@@ -1030,6 +1105,18 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(
+        expected = "If a name matching validator(s) is/are specified, one or more name matchers must also be specified"
+    )]
+    fn name_matching_validator_requires_name_matcher() {
+        FMBuilder::new("$1")
+            .unwrap()
+            .name_matching_validator(|_| true)
+            .build()
+            .unwrap();
+    }
+
+    #[test]
     fn consecutive_wildcards_disallowed() {
         match FMatcher::new("...\n...") {
             Err(e)
@@ -1080,6 +1167,30 @@ mod tests {
         let nameptn_re = Regex::new(r"\$.+?\b").unwrap();
         let name_re = Regex::new(r".+?\b").unwrap();
         let helper = |ptn: &str, text: &str| -> bool {
+            FMBuilder::new(ptn)
+                .unwrap()
+                .name_matcher(nameptn_re.clone(), name_re.clone())
+                .name_matching_validator(|names| {
+                    names.values().collect::<HashSet<_>>().len() == names.len()
+                })
+                .build()
+                .unwrap()
+                .matches(text)
+                .is_ok()
+        };
+
+        assert!(helper("$1 $1", "a a"));
+        assert!(!helper("$1 $1", "a b"));
+        assert!(!helper("$1 $2", "a a"));
+    }
+
+    /// This test can be removed when [FMBuilder::distinct_name_matching] is removed.
+    #[test]
+    fn distinct_names_deprecated() {
+        let nameptn_re = Regex::new(r"\$.+?\b").unwrap();
+        let name_re = Regex::new(r".+?\b").unwrap();
+        let helper = |ptn: &str, text: &str| -> bool {
+            #[allow(deprecated)]
             FMBuilder::new(ptn)
                 .unwrap()
                 .name_matcher(nameptn_re.clone(), name_re.clone())
