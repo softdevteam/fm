@@ -3,10 +3,7 @@
 #![allow(clippy::type_complexity)]
 
 use std::{
-    collections::{
-        hash_map::{Entry, HashMap},
-        HashSet,
-    },
+    collections::hash_map::{Entry, HashMap},
     default::Default,
     error::Error,
     fmt,
@@ -178,26 +175,6 @@ impl<'a> FMBuilder<'a> {
     pub fn name_matcher_ignore(mut self, ptn_re: Regex, text_re: Regex) -> Self {
         self.options.name_matchers.push((ptn_re, text_re, true));
         self
-    }
-
-    /// If `yes`, then different names cannot match the same text value. For example if `$1` binds
-    /// to `a` then `$2` will refuse to match against `a` (though `$1` will continue to match
-    /// against only `a`). Note that ignorable name matches (see [Self::name_matcher_ignore]) are
-    /// never subject to distinct name matching. Defaults to `false`.
-    ///
-    /// # Warning
-    ///
-    /// If you call this function with `true` then later with `false`, the latter will not take
-    /// effect.
-    #[deprecated(since = "0.3.1", note = "Please use name_matching_validator instead")]
-    pub fn distinct_name_matching(self, yes: bool) -> Self {
-        if yes {
-            self.name_matching_validator(|names| {
-                names.values().collect::<HashSet<_>>().len() == names.len()
-            })
-        } else {
-            self
-        }
     }
 
     /// Add a name matching validator: this takes a [HashMap] of `(key, value)` pairs and must
@@ -1174,28 +1151,6 @@ mod tests {
                 .name_matching_validator(|names| {
                     names.values().collect::<HashSet<_>>().len() == names.len()
                 })
-                .build()
-                .unwrap()
-                .matches(text)
-                .is_ok()
-        };
-
-        assert!(helper("$1 $1", "a a"));
-        assert!(!helper("$1 $1", "a b"));
-        assert!(!helper("$1 $2", "a a"));
-    }
-
-    /// This test can be removed when [FMBuilder::distinct_name_matching] is removed.
-    #[test]
-    fn distinct_names_deprecated() {
-        let nameptn_re = Regex::new(r"\$.+?\b").unwrap();
-        let name_re = Regex::new(r".+?\b").unwrap();
-        let helper = |ptn: &str, text: &str| -> bool {
-            #[allow(deprecated)]
-            FMBuilder::new(ptn)
-                .unwrap()
-                .name_matcher(nameptn_re.clone(), name_re.clone())
-                .distinct_name_matching(true)
                 .build()
                 .unwrap()
                 .matches(text)
