@@ -246,6 +246,7 @@ impl<'a> FMBuilder<'a> {
     /// If `yes`, then:
     ///   1. Blank lines at the start/end of the pattern and text are ignored.
     ///   2. Leading/trailing whitespace is ignored on each line of the pattern and text.
+    ///
     /// Defaults to "yes".
     pub fn trim_whitespace(mut self, yes: bool) -> Self {
         self.options.trim_whitespace = yes;
@@ -693,7 +694,7 @@ impl Error for FMatchError {
 /// If `trim` is set to true:
 ///   1. Leading/trailing blank space within lines is trimmed.
 ///   2. Leading/trailing blank lines (including blank space) are trimmed.
-fn line_trimmer<'a>(trim: bool, s: &'a str) -> (Vec<&'a str>, usize) {
+fn line_trimmer(trim: bool, s: &str) -> (Vec<&str>, usize) {
     let mut lines = s.lines().collect::<Vec<_>>();
     if !trim {
         return (lines, 1);
