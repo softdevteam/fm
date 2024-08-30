@@ -45,10 +45,10 @@ either:
 
 The interline wildcards are:
 
-  * The *prefix match* wildcard `...` matches until it finds a match for the
+  * The *prefix match* wildcard `...` searches until it finds a match for the
     line immediately after the interline operator ("the prefix"), at which
     point the search is anchored. This wildcard does not backtrack.
-  * The *group match* wildcard `..~` matches until it finds a match for the
+  * The *group match* wildcard `..~` searches until it finds a match for the
     next group, at which point the search is anchored. This wildcard
     backtracks, though never further than one group.
 

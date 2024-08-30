@@ -3,10 +3,7 @@
 #![allow(clippy::type_complexity)]
 
 use std::{
-    collections::{
-        hash_map::{Entry, HashMap},
-        HashSet,
-    },
+    collections::hash_map::{Entry, HashMap},
     default::Default,
     error::Error,
     fmt,
@@ -180,26 +177,6 @@ impl<'a> FMBuilder<'a> {
         self
     }
 
-    /// If `yes`, then different names cannot match the same text value. For example if `$1` binds
-    /// to `a` then `$2` will refuse to match against `a` (though `$1` will continue to match
-    /// against only `a`). Note that ignorable name matches (see [Self::name_matcher_ignore]) are
-    /// never subject to distinct name matching. Defaults to `false`.
-    ///
-    /// # Warning
-    ///
-    /// If you call this function with `true` then later with `false`, the latter will not take
-    /// effect.
-    #[deprecated(since = "0.3.1", note = "Please use name_matching_validator instead")]
-    pub fn distinct_name_matching(self, yes: bool) -> Self {
-        if yes {
-            self.name_matching_validator(|names| {
-                names.values().collect::<HashSet<_>>().len() == names.len()
-            })
-        } else {
-            self
-        }
-    }
-
     /// Add a name matching validator: this takes a [HashMap] of `(key, value)` pairs and must
     /// return `true` if this is a valid set of pairs or false otherwise. Name matching validators
     /// allow you to customise what names are valid matches. For example, if you want distinct
@@ -246,6 +223,7 @@ impl<'a> FMBuilder<'a> {
     /// If `yes`, then:
     ///   1. Blank lines at the start/end of the pattern and text are ignored.
     ///   2. Leading/trailing whitespace is ignored on each line of the pattern and text.
+    ///
     /// Defaults to "yes".
     pub fn trim_whitespace(mut self, yes: bool) -> Self {
         self.options.trim_whitespace = yes;
@@ -693,7 +671,7 @@ impl Error for FMatchError {
 /// If `trim` is set to true:
 ///   1. Leading/trailing blank space within lines is trimmed.
 ///   2. Leading/trailing blank lines (including blank space) are trimmed.
-fn line_trimmer<'a>(trim: bool, s: &'a str) -> (Vec<&'a str>, usize) {
+fn line_trimmer(trim: bool, s: &str) -> (Vec<&str>, usize) {
     let mut lines = s.lines().collect::<Vec<_>>();
     if !trim {
         return (lines, 1);
@@ -1173,28 +1151,6 @@ mod tests {
                 .name_matching_validator(|names| {
                     names.values().collect::<HashSet<_>>().len() == names.len()
                 })
-                .build()
-                .unwrap()
-                .matches(text)
-                .is_ok()
-        };
-
-        assert!(helper("$1 $1", "a a"));
-        assert!(!helper("$1 $1", "a b"));
-        assert!(!helper("$1 $2", "a a"));
-    }
-
-    /// This test can be removed when [FMBuilder::distinct_name_matching] is removed.
-    #[test]
-    fn distinct_names_deprecated() {
-        let nameptn_re = Regex::new(r"\$.+?\b").unwrap();
-        let name_re = Regex::new(r".+?\b").unwrap();
-        let helper = |ptn: &str, text: &str| -> bool {
-            #[allow(deprecated)]
-            FMBuilder::new(ptn)
-                .unwrap()
-                .name_matcher(nameptn_re.clone(), name_re.clone())
-                .distinct_name_matching(true)
                 .build()
                 .unwrap()
                 .matches(text)

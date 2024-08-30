@@ -1,3 +1,38 @@
+# fm 0.4.0 (2024-08-30)
+
+* Add the `..~` "group match" wildcard, which searches until it finds a match
+  for a group of lines. This means that fm now backtracks! The behaviour of the
+  `...` interline wildcard is unchanged, and is preferred, because it has more
+  predictable performance and leads to stronger tests.
+
+* Report names matched when matching fails. When matching fails, it can be hard
+  to work out what went wrong, particularly when name matching is used. fm now
+  reports the set of names and their values at the point of failure, which
+  helps debug matching problems.
+
+* Add support for "ignorable" name matchers. Sometimes one needs to match a
+  particular pattern, but the specific text matched is irrelevant. As a one-off
+  this was easily handled, but if you had multiple places where you wanted to
+  do this, you had to use a fresh name for each such instance, which is at best
+  obfuscatory and at worst error prone. Ignorable name matchers allow you to
+  use the same name (e.g. `_`) multiple times, each matching the same pattern,
+  but not comparing the text matched with other instances of the ignorable
+  name.
+
+* Report the text line where pattern failed to match from. Previously when
+  `...` failed, it told you how-far-it-got before realising it had failed,
+  rather than the more useful where-it-started.
+
+* Remove "distinct name matching" in favour of the more powerful "name
+  matching validator". Distinct name matching can now be expressed as:
+
+  ```
+  .name_matching_validator(|names| {
+    names.values().collect::<HashSet<_>>().len() == names.len()
+  })
+  ```
+
+
 # fm 0.3.0 (2024-03-20)
 
 * Add `OutputFormatter`s. The default output formatting has now changed from a
